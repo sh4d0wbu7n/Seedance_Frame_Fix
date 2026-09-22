@@ -5,6 +5,7 @@ import json
 import math
 import shutil
 import subprocess
+from collections import Counter
 from pathlib import Path
 
 import cv2
@@ -12,6 +13,67 @@ import numpy as np
 
 MARKER = '.seedance-work.json'
 OWNER = {'application': 'seedance-seam-fix', 'version': 1}
+
+
+def detect_jumps(scores, threshold_sigma=3.0, window=15, min_relative_jump=0.10,
+                 recover_periodic=True):
+    """Require meaningful amplitude; recover weaker peaks only on a strong grid.
+
+    Recovery requires >=4 strong peaks, >=60% equal adjacent gaps and >=80%
+    phase agreement. Every added point must still be a local maximum with
+    z >= min(threshold, 1), >=15% excess and >=0.5 absolute grey-level excess.
+    """
+    scores = np.asarray(scores, dtype=float)
+    n = len(scores)
+    z = np.zeros(n)
+    excess = np.zeros(n)
+    relative = np.zeros(n)
+    half = window // 2
+    for i in range(n):
+        lo, hi = max(0, i - half), min(n, i + half + 1)
+        local = np.delete(scores[lo:hi], i - lo)
+        if len(local) < 5:
+            continue
+        median = np.median(local)
+        excess[i] = scores[i] - median
+        relative[i] = excess[i] / max(median, 1e-6)
+        z[i] = excess[i] / (1.4826 * (np.median(np.abs(local - median)) + 1e-6))
+    strong = np.flatnonzero((z > threshold_sigma) & (relative >= min_relative_jump)).tolist()
+    recovered = []
+    period = None
+    if recover_periodic and len(strong) >= 4:
+        gaps = np.diff(strong).tolist()
+        candidate, count = Counter(gaps).most_common(1)[0]
+        if candidate >= 3 and count >= 3 and count / len(gaps) >= 0.60:
+            phase, support = Counter(i % candidate for i in strong).most_common(1)[0]
+            if support / len(strong) >= 0.80:
+                period = candidate
+                for i in range(phase, n, period):
+                    if (i not in strong and z[i] >= min(threshold_sigma, 1.0)
+                            and relative[i] >= max(min_relative_jump, 0.15)
+                            and excess[i] >= 0.5
+                            and scores[i] >= np.max(scores[max(0, i - 2):min(n, i + 3)])):
+                        recovered.append(i)
+    return sorted(strong + recovered), {'strong': strong, 'recovered': recovered, 'period': period}
+
+
+def find_jumps(scores, threshold_sigma=3.0, window=15, min_relative_jump=0.10,
+               recover_periodic=True):
+    return detect_jumps(scores, threshold_sigma, window, min_relative_jump, recover_periodic)[0]
+
+
+def relative_jump(value):
+    number = float(value)
+    if not math.isfinite(number) or number < 0:
+        raise argparse.ArgumentTypeError('Relative Mindeststaerke muss endlich und >= 0 sein.')
+    return number
+
+
+def add_detection_options(parser):
+    parser.add_argument('--min-relative-jump', type=relative_jump, default=0.10,
+                        help='Mindestanstieg gegen lokalen Median (0.10 = 10 Prozent)')
+    parser.add_argument('--no-periodic-recovery', action='store_true',
+                        help='Schwaechere Spitzen auf sicher erkanntem Periodenraster nicht ergaenzen')
 
 
 def positive_int(value):

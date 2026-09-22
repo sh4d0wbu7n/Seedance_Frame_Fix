@@ -25,4 +25,8 @@ video = next(s for s in data['streams'] if s['codec_type'] == 'video')
 assert int(video['nb_frames']) == 26, video
 assert any(s['codec_type'] == 'audio' for s in data['streams'])
 assert len(list((WORK / 'fixed_work/candidates').glob('seam_*/cand_*.png'))) == 2
+report = json.loads((WORK / 'fixed_work/repair_report.json').read_text())
+assert report['candidate_count'] == 1
+assert report['output_frames'] == 26
+assert [row['frame_index'] for row in report['seams']] == [5, 15]
 print('SMOKE OK: 24 -> 26 Frames, Audio vorhanden, Cache erneut verwendet, Kandidaten getrennt.')

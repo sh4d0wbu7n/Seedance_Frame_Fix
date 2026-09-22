@@ -1,6 +1,117 @@
 # Handover / Kontext für zukünftige Weiterentwicklung
 
+## Realvideo-Evaluation: Vorgehen, Ergebnis und Begruendung
+
+Getestet wurde lokal mit `Seedance_long.mp4`: 1920x1080, 24 fps, 601 Frames,
+25.041667 Sekunden Videodauer und vorhandener Tonspur. Die Quelldatei ist privat
+und wird nicht eingecheckt. Die Bezeichnung dient nur zur Zuordnung des lokalen
+Tests; das Programm enthaelt weder Dateinamen-Sonderfaelle noch feste Sprung-Indizes.
+
+### Was wurde getestet und warum?
+
+1. **Original und unveraenderten Algorithmus vermessen.** FFprobe pruefte
+   Framezahl, Bildrate, Aufloesung und Audio. `find_seams.py` lieferte Rohscores;
+   ein vollstaendiger Referenzlauf mit sieben RIFE-Kandidaten pro Treffer wurde
+   erzeugt. Das schafft einen Vergleich vor jeder Aenderung und verhindert,
+   dass neue Ergebnisse nur gegen einen subjektiven Eindruck bewertet werden.
+2. **Treffer und ausgelassene Spitzen untersuchen.** Kontaktbilder zeigten
+   benachbarte Originalframes; lokale Medianwerte, Z-Scores und Farbverteilungen
+   halfen, schwache statistische Ausreisser von groesseren Bewegungswechseln
+   abzugrenzen. Zwei Treffer bei Indizes 122 und 278 lagen nur ca. 6 bzw.
+   4 Prozent ueber dem lokalen Median. Die kleine lokale Streuung machte ihren
+   Z-Score trotzdem auffaellig. Vier weitere lokale Maxima (23, 47, 71, 575)
+   lagen auf dem klaren 24-Frame-Raster, wurden aber vom festen Z-Schwellwert
+   verpasst. Diese Beobachtung begruendete Mindestanstieg und Perioden-Ergaenzung.
+3. **Allgemeine Regeln statt videofester Korrekturen implementieren.** Mindestens
+   10 Prozent relativer Anstieg fuer normale Treffer. Periodische Ergaenzung
+   erst ab vier starken Treffern, drei gleichen Abstaenden mit mindestens
+   60 Prozent Anteil und mindestens 80 Prozent Phasenuebereinstimmung.
+   Ein ergaenzter Punkt braucht weiterhin ein lokales Maximum, mindestens
+   15 Prozent relativen und 0.5 Graustufen absoluten Anstieg sowie Z >= 1
+   (bzw. den explizit niedrigeren Schwellwert). Rasterposition allein reicht
+   nicht. Die gemeldete Perioden-Konfidenz benutzt nur unabhaengig erkannte
+   starke Treffer, damit ergaenzte Punkte sie nicht kuenstlich erhoehen.
+4. **Kandidatenwahl separat kontrollieren.** Im Referenzlauf gewann an allen
+   22 Stellen t=0.5. Daher zuerst ein schneller verbesserter Lauf mit einem
+   Kandidaten. Die 20 gemeinsamen Stellen waren byte-identisch mit den jeweils
+   besten Referenzkandidaten. Anschliessend auch die vier neuen Stellen mit
+   sieben Kandidaten pruefen: Bei Index 23 gewann t=0.375, bei den anderen
+   t=0.5. Deshalb sieben Kandidaten als Standard beibehalten. Die finale
+   Sequenz wurde aus diesen bereits berechneten besten Kandidaten aufgebaut
+   und einmal aus PNGs encodiert, ohne erneute verlustbehaftete Zwischenrunde.
+5. **Das fertige Video pruefen.** FFprobe bestaetigte 625 Frames bei 24 fps
+   (26.041667 Sekunden); Audio war vorhanden und ca. 26.03 Sekunden lang.
+   FFmpeg decodierte Bild und Ton vollstaendig ohne gemeldete Fehler. Die
+   Uebergangsscores wurden nochmals am encodierten Ergebnis gemessen, um
+   Kandidatenqualitaet und Encoding nicht zu verwechseln. Der SHA-256-Abgleich
+   mit dem Extraktionsmanifest bestaetigte das unveraenderte Original.
+6. **Regressionen absichern.** Zehn Unittests deckten Cache-Invalidierung,
+   abgebrochene Extraktion, Workdir-Schutz, Argumente, getrennte Kandidaten,
+   Pad/Randbehandlung, Szenenschnitt-Heuristik, Perioden-Konfidenz, schwache
+   Ausreisser und evidenzpflichtige periodische Ergaenzung ab. Der synthetische
+   FFmpeg/RIFE-Smoke-Test pruefte 24 -> 26 Frames, Audio, Cache-Wiederverwendung
+   und den neuen JSON-Reparaturbericht. Alle Tests bestanden.
+
+### Ergebnis und Grenzen der Aussage
+
+Der Referenzlauf fuegte 22 Frames ein (623 insgesamt). Die verbesserte Erkennung
+entfernte zwei schwache Treffer und ergaenzte vier Spitzen: 24 Einfuegungen,
+625 Frames insgesamt. Der jeweils groessere der beiden verbleibenden
+Uebergangsscores sank im Mittel um 30.8 Prozent an den PNG-Kandidaten und um
+28.7 Prozent im fertig encodierten Video (Spanne 18.5 bis 42.8 Prozent).
+Diese Zahlen vergleichen die reparierten Stellen mit ihren **Originalspruengen**,
+nicht mit dem schon reparierten Referenzvideo.
+
+Die Metrik ist mittlere Graustufen-Pixeldifferenz nach Skalierung auf 320 Pixel
+Breite und Blur. Sie ist kein unabhaengiges Wahrnehmungsmodell und bevorzugt
+gegebenenfalls auch weichere Bilder. Modellseitig erfolgte eine Sichtpruefung
+von Kontaktbildern, keine vollstaendige Echtzeit-Wiedergabe. Der Nutzer bewertete
+das gelieferte Video anschliessend ausdruecklich als sehr gutes Ergebnis.
+Die neuen Schwellen wurden an **einem** Realvideo plus synthetischen Tests
+geprueft. Die README-Startwerte fuer andere Shot-Typen sind begruendete Vorschlaege,
+keine gemessenen Presets. Globale Audiostreckung bleibt eine Naeherung.
+
+### Reproduzierbare Befehle
+
+Voraussetzung: Projekt-venv, FFmpeg/FFprobe und lokal entpacktes RIFE v4.6.
+Aus dem Projektordner ausfuehren; andere Ausgabe-Dateinamen waehlen, falls
+bereits eigene Ergebnisse existieren.
+
+```powershell
+# Verhalten vor der neuen Mindeststaerke und Perioden-Ergaenzung:
+.\.venv\Scripts\python.exe insert_best_frame.py Seedance_long.mp4 Seedance_long_baseline.mp4 --rife-bin rife-ncnn-vulkan/rife-ncnn-vulkan.exe --rife-model rife-ncnn-vulkan/rife-v4.6 --min-relative-jump 0 --no-periodic-recovery --candidates 7
+# Neue Standarderkennung und finale Kandidatenwahl:
+.\.venv\Scripts\python.exe insert_best_frame.py Seedance_long.mp4 Seedance_long_improved.mp4 --rife-bin rife-ncnn-vulkan/rife-ncnn-vulkan.exe --rife-model rife-ncnn-vulkan/rife-v4.6 --candidates 7
+# Lokale Messdaten/Kontaktbilder und technische Pruefung:
+.\.venv\Scripts\python.exe evaluate_video.py Seedance_long.mp4 --output .test-output/evaluation --candidates Seedance_long_improved_work/candidates
+ffprobe -v error -show_streams -show_format -of json Seedance_long_improved.mp4
+ffmpeg -v error -i Seedance_long_improved.mp4 -f null -
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe tests/smoke_pipeline.py
+```
+
+`evaluate_video.py` vergleicht Original und vorhandene PNG-Kandidaten; die
+Messung nach Encoding wurde fuer diesen Test separat durch Zuordnung der
+eingefuegten Frames vorgenommen. Sie ist nicht automatisch Teil dieses Tools.
+`repair_report.json` enthaelt die Kandidatenmetrik und Laufparameter.
+
+Nach Abschluss wurden auf Nutzerwunsch Testausgaben entfernt: beide erzeugten
+Vergleichsvideos, ihre `_work`-Ordner, `.test-output/` mit Kontaktbildern,
+Messdateien und einmaligen Auswertungsscripts, `score_per_frame.csv` und
+Python-Bytecode-Caches im Projekt/Testordner. Originalvideo, `.venv`, RIFE und
+die wiederverwendbaren Test-/Evaluationsscripts bleiben erhalten.
+
 ## Aktualisierung 2026-09-22
+
+Ein anschliessender Realvideo-Vergleich ergab zwei sehr schwache Z-Score-Treffer
+bei nur 4-6 Prozent Bewegungsanstieg sowie vier ausgelassene lokale Spitzen auf
+einem stabilen 24-Frame-Raster. Die gemeinsame Erkennung in `seam_utils.py`
+verlangt jetzt mindestens 10 Prozent relativen Anstieg und kann evidenzgestuetzt
+periodische Spitzen ergaenzen (abschaltbar). Die vier Scripts verwenden dieselbe
+Erkennung; ihre Kopien wurden entfernt. `evaluate_video.py` und
+`repair_report.json` erlauben nachvollziehbare lokale Vergleiche ohne private
+Videodaten zu versionieren. Die neuen Schwellen sind an einem Realvideo plus
+synthetischen Regressionstests geprueft, nicht an einem breiten Benchmark.
 
 Die folgenden historischen Abschnitte beschreiben den urspruenglichen Stand.
 Inzwischen umgesetzt: abgesicherter Frame-Cache mit Eingabe-SHA-256 und

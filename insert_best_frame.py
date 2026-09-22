@@ -32,6 +32,7 @@ wird ein vorher vorhandener Workdir-Inhalt vor dem Lauf geleert.
 """
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
@@ -39,6 +40,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from seam_utils import find_jumps, detect_jumps, add_detection_options
 from seam_utils import (positive_int, positive_float, frame_indices, validate_input,
                         validate_frames, exclude_scene_cuts, prepare_workdir,
                         reset_owned_dir, cached_frames)
@@ -63,22 +65,6 @@ def compute_motion_scores(path, resize_width=320):
         prev_gray = gray
     cap.release()
     return np.array(scores), fps
-
-
-def find_jumps(scores, threshold_sigma, window=15):
-    n = len(scores)
-    jumps = []
-    half = window // 2
-    for i in range(n):
-        lo, hi = max(0, i - half), min(n, i + half + 1)
-        local = np.delete(scores[lo:hi], min(i, half) if i - lo < half else half)
-        if len(local) < 5:
-            continue
-        med = np.median(local)
-        mad = np.median(np.abs(local - med)) + 1e-6
-        if (scores[i] - med) / (mad * 1.4826) > threshold_sigma:
-            jumps.append(i)
-    return jumps
 
 
 def frame_diff_score(img_a, img_b, resize_width=320):
@@ -162,6 +148,7 @@ def main():
     ap.add_argument("--clean", action="store_true",
                      help="Workdir vor dem Lauf leeren (z.B. wenn sich die Sprungstellen "
                           "seit dem letzten Lauf geändert haben)")
+    add_detection_options(ap)
     args = ap.parse_args()
     validate_input(args, ap)
 
@@ -177,7 +164,11 @@ def main():
     else:
         print("Erkenne Sprungstellen ...")
         scores, fps = compute_motion_scores(args.input)
-        seam_frames = find_jumps(scores, args.threshold)
+        seam_frames, detection = detect_jumps(scores, args.threshold,
+                                             min_relative_jump=args.min_relative_jump,
+                                             recover_periodic=not args.no_periodic_recovery)
+        if detection['recovered']:
+            print(f'Periodische Bewegungsspitzen ergaenzt: {detection["recovered"]}')
         if not args.include_scene_cuts:
             seam_frames = exclude_scene_cuts(args.input, seam_frames)
         print(f"{len(seam_frames)} Sprungstellen gefunden: {seam_frames}")
@@ -211,6 +202,7 @@ def main():
 
     seam_set = set(seam_frames)
     out_idx = 1
+    seam_report = []
 
     print(f"Suche pro Sprungstelle den besten von {args.candidates} Kandidaten-Frames ...")
     for i in range(n_frames):
@@ -223,6 +215,10 @@ def main():
                 cand_dir / f'seam_{i:06d}'
             )
             total_gap = frame_diff_score(cv2.imread(str(a_path)), cv2.imread(str(b_path)))
+            seam_report.append({'frame_index': i, 'time_seconds': (i + 1) / fps,
+                                'chosen_t': t, 'gap_before': total_gap,
+                                'gap_left': left, 'gap_right': right,
+                                'reduction_fraction': 1 - worst / max(total_gap, 1e-6)})
             print(f"  Sprung {i + 1:06d}->{i + 2:06d}: bester t={t:.3f} "
                   f"(gap vorher={total_gap:.2f}, links={left:.2f}, rechts={right:.2f})")
             out_p = new_dir / f"frame_{out_idx:06d}.png"
@@ -247,6 +243,18 @@ def main():
             cmd += ["-i", args.input, "-map", "0:v:0", "-map", "1:a:0", "-c:a", "copy"]
     cmd += ["-c:v", "libx264", "-crf", str(args.crf), "-pix_fmt", "yuv420p", args.output]
     subprocess.run(cmd, check=True)
+
+    report = {'original_frames': n_frames, 'output_frames': new_total, 'fps': fps,
+              'candidate_count': args.candidates,
+              'detection': {'manual_frames': args.frames,
+                            'threshold': args.threshold,
+                            'min_relative_jump': args.min_relative_jump,
+                            'periodic_recovery': not args.no_periodic_recovery},
+              'metric': 'Mean absolute blurred grayscale difference at 320px; not perceptual quality.',
+              'seams': seam_report}
+    report_path = work_dir / 'repair_report.json'
+    report_path.write_text(json.dumps(report, indent=2), encoding='utf-8')
+    print(f'Messbericht: {report_path}')
 
     print(f"\nFertig: {args.output}")
     print(f"Zwischendateien liegen weiterhin in {work_dir.resolve()} "

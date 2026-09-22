@@ -15,6 +15,30 @@ from insert_best_frame import find_best_candidate
 
 
 class RegressionTests(unittest.TestCase):
+    def test_flat_neighborhood_does_not_promote_tiny_spikes(self):
+        scores = np.full(100, 5.0)
+        scores[30] = 5.2
+        self.assertEqual(utils.find_jumps(scores), [])
+        self.assertEqual(utils.find_jumps(scores, min_relative_jump=0, recover_periodic=False), [30])
+
+    def test_period_recovery_requires_real_peak(self):
+        scores = np.array([5.0, 5.2, 4.8, 5.1, 4.9] * 40)
+        for index in (39, 59, 79, 99, 119, 139):
+            scores[index] = 8
+        scores[19] = 5.9
+        scores[159] = 5.1  # Grid position alone must not be sufficient.
+        jumps, report = utils.detect_jumps(scores, threshold_sigma=8)
+        self.assertIn(19, report['recovered'])
+        self.assertNotIn(159, jumps)
+        self.assertNotIn(19, utils.find_jumps(scores, 8, recover_periodic=False))
+
+    def test_irregular_peaks_do_not_establish_period(self):
+        scores = np.full(150, 5.0)
+        scores[[15, 37, 68, 105]] = 8
+        _, report = utils.detect_jumps(scores)
+        self.assertIsNone(report['period'])
+        self.assertEqual(report['recovered'], [])
+
     def test_period_requires_repeated_majority(self):
         self.assertIsNone(cluster_period([0, 24])[0])
         self.assertIsNone(cluster_period([0, 8, 21, 45, 81])[0])

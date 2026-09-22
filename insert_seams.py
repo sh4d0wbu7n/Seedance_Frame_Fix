@@ -43,6 +43,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from seam_utils import find_jumps, detect_jumps, add_detection_options
 from seam_utils import (positive_int, positive_float, frame_indices, validate_input,
                         validate_frames, exclude_scene_cuts)
 
@@ -66,22 +67,6 @@ def compute_motion_scores(path, resize_width=320):
         prev_gray = gray
     cap.release()
     return np.array(scores), fps
-
-
-def find_jumps(scores, threshold_sigma, window=15):
-    n = len(scores)
-    jumps = []
-    half = window // 2
-    for i in range(n):
-        lo, hi = max(0, i - half), min(n, i + half + 1)
-        local = np.delete(scores[lo:hi], min(i, half) if i - lo < half else half)
-        if len(local) < 5:
-            continue
-        med = np.median(local)
-        mad = np.median(np.abs(local - med)) + 1e-6
-        if (scores[i] - med) / (mad * 1.4826) > threshold_sigma:
-            jumps.append(i)
-    return jumps
 
 
 def run_rife(a_path, b_path, out_path, t, rife_bin, rife_model):
@@ -124,6 +109,7 @@ def main():
     ap.add_argument("--stretch-audio", dest="stretch_audio", action="store_true", default=True)
     ap.add_argument("--no-stretch-audio", dest="stretch_audio", action="store_false")
     ap.add_argument("--keep-frames", action="store_true")
+    add_detection_options(ap)
     args = ap.parse_args()
     if args.factor < 2:
         ap.error('--factor muss mindestens 2 sein.')
@@ -141,7 +127,7 @@ def main():
     else:
         print("Erkenne Sprungstellen ...")
         scores, fps = compute_motion_scores(args.input)
-        seam_frames = find_jumps(scores, args.threshold)
+        seam_frames = find_jumps(scores, args.threshold, min_relative_jump=args.min_relative_jump, recover_periodic=not args.no_periodic_recovery)
         if not args.include_scene_cuts:
             seam_frames = exclude_scene_cuts(args.input, seam_frames)
         print(f"{len(seam_frames)} Sprungstellen gefunden: {seam_frames}")

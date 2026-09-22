@@ -30,6 +30,7 @@ from collections import Counter
 
 import cv2
 import numpy as np
+from seam_utils import find_jumps, detect_jumps, add_detection_options
 from seam_utils import positive_float, positive_int, exclude_scene_cuts
 
 
@@ -65,25 +66,6 @@ def compute_motion_scores(path, resize_width=320):
     return np.array(scores), fps
 
 
-def find_jumps(scores, threshold_sigma, window=15):
-    """Findet Frames, deren Bewegungs-Score deutlich über dem lokalen
-    Median liegt (robust gegen langsam wechselnde Szenen)."""
-    n = len(scores)
-    jumps = []
-    half = window // 2
-    for i in range(n):
-        lo, hi = max(0, i - half), min(n, i + half + 1)
-        local = np.delete(scores[lo:hi], min(i, half) if i - lo < half else half)
-        if len(local) < 5:
-            continue
-        med = np.median(local)
-        mad = np.median(np.abs(local - med)) + 1e-6  # median absolute deviation
-        z = (scores[i] - med) / (mad * 1.4826)  # ~ robust z-score
-        if z > threshold_sigma:
-            jumps.append(i)
-    return jumps
-
-
 def cluster_period(jump_indices, min_period=3):
     if len(jump_indices) < 2:
         return None, []
@@ -106,6 +88,7 @@ def main():
     ap.add_argument("--include-scene-cuts", action="store_true", help="Szenenschnitt-Filter deaktivieren")
     ap.add_argument("--min-period", type=positive_int, default=3,
                      help="Minimaler Frame-Abstand, der als Periode gezählt wird")
+    add_detection_options(ap)
     args = ap.parse_args()
 
     print(f"Analysiere {args.video} ...")
@@ -119,7 +102,9 @@ def main():
             w.writerow([i, round(float(s), 4), round(i / fps, 3)])
     print("Rohwerte gespeichert in score_per_frame.csv")
 
-    jumps = find_jumps(scores, args.threshold)
+    jumps, detection = detect_jumps(scores, args.threshold,
+                                   min_relative_jump=args.min_relative_jump,
+                                   recover_periodic=not args.no_periodic_recovery)
     if not args.include_scene_cuts:
         jumps = exclude_scene_cuts(args.video, jumps)
     if not jumps:
@@ -132,7 +117,11 @@ def main():
     for i in jumps:
         print(f"  Frame {i:5d} -> {i+1:5d}   (t={i/fps:6.2f}s)   score={scores[i]:.2f}")
 
-    period, diffs = cluster_period(jumps, args.min_period)
+    recovered = [i for i in detection['recovered'] if i in jumps]
+    if recovered:
+        print(f'Periodisch ergaenzte Spitzen: {recovered}')
+    # Confidence must come from independently detected peaks, not recovered ones.
+    period, diffs = cluster_period([i for i in detection['strong'] if i in jumps], args.min_period)
     if period:
         print(f"\nWahrscheinliche Periodizität: alle ~{period} Frames "
               f"(~{period/fps:.2f}s bei {fps:.1f} fps)")
