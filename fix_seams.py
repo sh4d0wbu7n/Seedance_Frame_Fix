@@ -38,6 +38,19 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from seam_utils import (positive_int, positive_float, frame_indices, validate_input,
+                        validate_frames, exclude_scene_cuts)
+
+
+def replacement_plan(seams, pad, count):
+    plan = {}
+    for i in seams:
+        a, b = max(0, i - pad), min(count - 1, i + 1 + pad)
+        for index in (i, i + 1):
+            # At boundaries the endpoint itself is already the original image.
+            if a < index < b:
+                plan[index] = (a, b, (index - a) / (b - a))
+    return plan
 
 
 def compute_motion_scores(path, resize_width=320):
@@ -97,10 +110,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input", help="Eingabevideo")
     ap.add_argument("output", help="Ausgabevideo (repariert)")
-    ap.add_argument("--threshold", type=float, default=3.0)
-    ap.add_argument("--frames", type=str, default=None,
+    ap.add_argument("--threshold", type=positive_float, default=3.0)
+    ap.add_argument("--include-scene-cuts", action="store_true")
+    ap.add_argument("--frames", type=frame_indices, default=None,
                      help="Kommagetrennte Liste von Sprung-Frame-Indizes (überschreibt Auto-Erkennung)")
-    ap.add_argument("--pad", type=int, default=1,
+    ap.add_argument("--pad", type=positive_int, default=1,
                      help="Wie viele Frames auf jeder Seite als 'sauber' gelten, "
                           "bevor die Interpolationsbasis genommen wird (default 1)")
     ap.add_argument("--rife-bin", type=str, required=True,
@@ -112,13 +126,14 @@ def main():
     ap.add_argument("--keep-frames", action="store_true",
                      help="Temp-Ordner mit den PNG-Frames nicht löschen (zum Nachschauen)")
     args = ap.parse_args()
+    validate_input(args, ap)
 
     if not shutil.which(args.rife_bin) and not Path(args.rife_bin).exists():
         sys.exit(f"rife-ncnn-vulkan nicht gefunden unter: {args.rife_bin}\n"
                   f"Lade es von https://github.com/nihui/rife-ncnn-vulkan/releases")
 
-    if args.frames:
-        seam_frames = sorted(set(int(x) for x in args.frames.split(",")))
+    if args.frames is not None:
+        seam_frames = args.frames
         cap = cv2.VideoCapture(args.input)
         fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
         cap.release()
@@ -126,25 +141,18 @@ def main():
         print("Erkenne Sprungstellen ...")
         scores, fps = compute_motion_scores(args.input)
         seam_frames = find_jumps(scores, args.threshold)
+        if not args.include_scene_cuts:
+            seam_frames = exclude_scene_cuts(args.input, seam_frames)
         print(f"{len(seam_frames)} Sprungstellen gefunden: {seam_frames}")
 
     if not seam_frames:
         print("Keine Sprungstellen -> nichts zu tun.")
         return
 
-    # Für jede Sprungstelle i (Übergang i -> i+1) werden Frame i und i+1 ersetzt
-    # durch Interpolation zwischen Frame (i - pad) und Frame (i + 1 + pad).
-    bad_frames = {}  # 0-based frame_index -> (a_idx, b_idx, t)
-    for i in seam_frames:
-        a_idx = i - args.pad
-        b_idx = i + 1 + args.pad
-        bad_frames[i] = (a_idx, b_idx, 1 / 3)
-        bad_frames[i + 1] = (a_idx, b_idx, 2 / 3)
-
     has_audio = ffprobe_has_audio(args.input)
 
     tmp_ctx = tempfile.TemporaryDirectory()
-    work_dir = Path(tmp_ctx.name) if not args.keep_frames else Path("fix_seams_frames")
+    work_dir = Path(tmp_ctx.name) if not args.keep_frames else Path(tempfile.mkdtemp(prefix="fix_seams_frames_", dir="."))
     frames_dir = work_dir / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
 
@@ -154,6 +162,10 @@ def main():
         check=True, capture_output=True,
     )
     n_frames = len(list(frames_dir.glob("frame_*.png")))
+    validate_frames(seam_frames, n_frames)
+    bad_frames = replacement_plan(seam_frames, args.pad, n_frames)
+    replacements = work_dir / 'replacements'
+    replacements.mkdir()
     print(f"{n_frames} Frames extrahiert.")
 
     def frame_path(idx0):  # 0-based -> ffmpeg's 1-based filename
@@ -164,9 +176,13 @@ def main():
     for idx, (a_idx, b_idx, t) in bad_frames.items():
         if idx < 0 or idx >= n_frames:
             continue
-        out_p = frame_path(idx)
+        out_p = replacements / frame_path(idx).name
         print(f"  Frame {idx + 1:06d}.png <- RIFE({a_idx + 1:06d}, {b_idx + 1:06d}, t={t:.2f})")
         run_rife(frame_path(a_idx), frame_path(b_idx), out_p, t, args.rife_bin, args.rife_model)
+
+    # Generate all replacements from unchanged original frames first.
+    for replacement in replacements.glob('*.png'):
+        shutil.copy(replacement, frames_dir / replacement.name)
 
     print(f"Finaler Encode (CRF {args.crf}) ...")
     cmd = ["ffmpeg", "-y", "-framerate", str(fps), "-i", str(frames_dir / "frame_%06d.png")]

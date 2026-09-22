@@ -50,6 +50,26 @@ nötig.
 
 ## Nutzung
 
+### Windows: Desktop-Launcher
+
+`Seedance Frame Fix.cmd` auf dem Desktop per Doppelklick starten und ein Video
+auswaehlen; alternativ eine Videodatei auf den Launcher ziehen. Das Ergebnis
+landet neben der Eingabe als `<name>_fixed.mp4`. Bereits vorhandene Ergebnisse
+werden durch nummerierte Dateinamen geschuetzt. Ohne erkannte Sprungstellen
+wird keine neue Datei erzeugt.
+
+Der Launcher verwendet `.venv\Scripts\python.exe` und das lokal heruntergeladene Modell
+`rife-v4.6`. FFmpeg und FFprobe muessen im PATH liegen. Zum erneuten Einrichten:
+
+```powershell
+uv venv --python 3.12 --seed .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install_desktop_launcher.ps1
+```
+
+Der Installer ueberschreibt keinen vorhandenen Desktop-Launcher. Alternativ
+laesst sich `launch.ps1` direkt ausfuehren.
+
 ### 1. Sprungstellen finden (optional, zur Kontrolle)
 
 ```bash
@@ -98,12 +118,24 @@ Das Script:
 | `--workdir` | Ordner für Zwischendateien (default `<output>_work/`) |
 | `--clean` | Workdir vor dem Lauf leeren (z. B. nach geänderten Sprungstellen) |
 | `--no-stretch-audio` | Ton nicht strecken, bleibt unverändert |
+| `--include-scene-cuts` | Automatischen Szenenschnitt-Filter deaktivieren |
 
 **Zwischendateien** (extrahierte Originalframes, alle getesteten Kandidaten,
 finale Sequenz) landen in `<output>_work/` und werden **nicht** automatisch
 gelöscht — praktisch, um einzelne Kandidaten manuell zu prüfen oder
 nachzubessern, und um bei einem erneuten Lauf die teure Frame-Extraktion zu
 überspringen.
+
+Der Cache wird nur wiederverwendet, wenn der SHA-256-Fingerabdruck der Eingabe
+und die vollstaendige Frame-Dateiliste mit Dateigroessen passen. Eine abgebrochene
+Extraktion wird neu gestartet. `--clean` erneuert nur verwaltete Unterordner;
+andere Dateien im Workdir bleiben erhalten. Nicht leere Arbeitsordner ohne
+Projektmarkierung (auch aus alten Versionen) werden abgelehnt: dafuer einen
+neuen Workdir angeben. Eingabe, Ausgabe und Projekt duerfen nicht im Workdir liegen.
+Kandidaten liegen getrennt unter `candidates/seam_<Index>/`; Indizes sind nullbasiert.
+
+Die Periodenschaetzung verlangt mindestens drei gleiche Abstaende mit mindestens
+60 Prozent Anteil und zeigt diesen Anteil an. Sie beweist keine Modell-Fenstergroesse.
 
 ### Weitere Scripts im Repo (ältere/alternative Ansätze)
 
@@ -119,13 +151,32 @@ Ergebnisse (siehe `HANDOVER.md` für Details zur Entwicklungsgeschichte).
 
 ## Bekannte Einschränkungen
 
-- Erkennt eine gemessene Bewegungsspitze, nicht die Ursache dahinter. Echte
-  Szenenschnitte (Kamerawechsel etc.) können fälschlich als Chunk-Sprung
-  erkannt werden — dort hilft Frame-Einfügen wenig, weil kein fließender
-  Übergang gewollt ist. Solche Stellen ggf. per `--frames` gezielt ausschließen.
+- Ein konservativer Szenenschnitt-Filter laesst Uebergaenge mit gleichzeitig
+  grosser Pixeldifferenz und stark abweichender Farbverteilung aus. Die Heuristik
+  kann Schnitte uebersehen und starke Lichtwechsel falsch einordnen. Mit
+  `--include-scene-cuts` abschaltbar; explizite `--frames` umgehen den Filter.
 - Bei sehr großem Bewegungssprung (Score weit über dem Rest, typischerweise
   gegen Ende einer langen Seedance-Generierung durch akkumulierenden Drift)
   kann selbst der beste RIFE-Kandidat den Sprung nicht vollständig kaschieren.
 
 Mehr Kontext, offene Fragen und Ideen für Weiterentwicklung: siehe
 `HANDOVER.md`.
+
+## Tests
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe tests\smoke_pipeline.py
+```
+
+Der zweite Test benoetigt FFmpeg, FFprobe und das lokal installierte Windows-RIFE.
+Er erzeugt ein kurzes Testvideo unter `.test-output/`, prueft Framezahl und Audio
+und fuehrt die Verarbeitung erneut aus, um die Cache-Wiederverwendung zu pruefen.
+
+## Dateien im oeffentlichen Repository
+
+Virtuelle Umgebungen, lokale Einstellungen, Videos, generierte Frames und
+heruntergeladene RIFE-Binaerdateien/Modelle werden nicht versioniert.
+RIFE vor dem ersten Start wie unter Installation beschrieben herunterladen und
+nach `rife-ncnn-vulkan/` entpacken. Dessen README und Lizenz bleiben im Repository.
+Tests erzeugen ihre Videodaten lokal; private Beispielvideos sind nicht erforderlich.

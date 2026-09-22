@@ -1,5 +1,23 @@
 # Handover / Kontext für zukünftige Weiterentwicklung
 
+## Aktualisierung 2026-09-22
+
+Die folgenden historischen Abschnitte beschreiben den urspruenglichen Stand.
+Inzwischen umgesetzt: abgesicherter Frame-Cache mit Eingabe-SHA-256 und
+Abschlussmanifest, markierte Workdirs mit begrenzter Bereinigung, getrennte
+Kandidaten je Sprung, CLI-Validierung, Perioden-Mindestkonfidenz sowie korrekte
+`--pad`-Zeitpunkte inklusive Randbehandlung. `fix_seams.py` erzeugt Ersatzframes
+zuerst aus unveraenderten Originalen. Die alten Scripts verwenden bei
+`--keep-frames` neue eindeutige Ordner, damit keine alten Restframes bleiben.
+
+Alle vier Scripts nutzen `seam_utils.py` fuer gemeinsame Validierung bzw.
+Szenenschnitt-Heuristik; sie sind daher nicht mehr einzeln kopierbar.
+Die konservative Schnitt-Heuristik ist standardmaessig bei Auto-Erkennung aktiv,
+mit `--include-scene-cuts` abschaltbar; manuelle `--frames` haben Vorrang.
+Sie ist noch nicht an einem Repraesentativsatz echter Seedance-Videos kalibriert.
+Regressionstests und ein expliziter FFmpeg/RIFE-Smoke-Test liegen unter `tests/`.
+Windows-Start ueber `launch.ps1` bzw. installierten Desktop-Launcher.
+
 Dieses Dokument ist für eine zukünftige LLM-Session (oder dich selbst in ein
 paar Monaten) gedacht, um das Projekt ohne erneutes Durchprobieren aller
 Sackgassen fortzusetzen. Bitte komplett lesen, bevor du etwas änderst — die

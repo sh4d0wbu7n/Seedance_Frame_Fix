@@ -30,6 +30,7 @@ from collections import Counter
 
 import cv2
 import numpy as np
+from seam_utils import positive_float, positive_int, exclude_scene_cuts
 
 
 def compute_motion_scores(path, resize_width=320):
@@ -91,15 +92,19 @@ def cluster_period(jump_indices, min_period=3):
         return None, diffs
     counter = Counter(diffs)
     most_common_period, count = counter.most_common(1)[0]
+    confidence = count / len(diffs)
+    if count < 3 or confidence < 0.6:
+        return None, diffs
     return most_common_period, diffs
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("video", help="Pfad zum Video (z.B. seedance_output.mp4)")
-    ap.add_argument("--threshold", type=float, default=3.0,
+    ap.add_argument("--threshold", type=positive_float, default=3.0,
                      help="Robuster z-score-Schwellwert für 'Sprung' (default 3.0, kleiner = empfindlicher)")
-    ap.add_argument("--min-period", type=int, default=3,
+    ap.add_argument("--include-scene-cuts", action="store_true", help="Szenenschnitt-Filter deaktivieren")
+    ap.add_argument("--min-period", type=positive_int, default=3,
                      help="Minimaler Frame-Abstand, der als Periode gezählt wird")
     args = ap.parse_args()
 
@@ -115,6 +120,8 @@ def main():
     print("Rohwerte gespeichert in score_per_frame.csv")
 
     jumps = find_jumps(scores, args.threshold)
+    if not args.include_scene_cuts:
+        jumps = exclude_scene_cuts(args.video, jumps)
     if not jumps:
         print("\nKeine auffälligen Sprünge gefunden. Versuch --threshold kleiner "
               "(z.B. 2.0), oder schau dir score_per_frame.csv manuell an — "
@@ -129,8 +136,9 @@ def main():
     if period:
         print(f"\nWahrscheinliche Periodizität: alle ~{period} Frames "
               f"(~{period/fps:.2f}s bei {fps:.1f} fps)")
-        print("-> passt das zu einer festen Chunk-Länge deines Generators? "
-              "Das ist so gut wie sicher die interne Fenstergröße des Modells.")
+        confidence = diffs.count(period) / len(diffs)
+        print(f'Uebereinstimmung der Abstaende: {confidence:.0%} '
+              f'({diffs.count(period)}/{len(diffs)}). Kein Beweis fuer eine Modell-Fenstergroesse.')
     else:
         print("\nKein klar periodisches Muster erkannt — die Sprünge könnten "
               "auch von der Szene selbst kommen (schnelle Bewegung), nicht vom Modell.")

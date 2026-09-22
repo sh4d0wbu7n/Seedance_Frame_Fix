@@ -39,6 +39,9 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from seam_utils import (positive_int, positive_float, frame_indices, validate_input,
+                        validate_frames, exclude_scene_cuts, prepare_workdir,
+                        reset_owned_dir, cached_frames)
 
 
 def compute_motion_scores(path, resize_width=320):
@@ -113,6 +116,9 @@ def ffprobe_duration(path):
 def find_best_candidate(a_path, b_path, candidates, rife_bin, rife_model, work_dir):
     """Erzeugt Kandidaten bei mehreren t-Werten und wählt den mit dem am
     besten ausgeglichenen Split (min. des größeren der beiden Rest-Sprünge)."""
+    if candidates < 1:
+        raise ValueError('Mindestens ein Kandidat erforderlich.')
+    work_dir.mkdir(parents=True, exist_ok=True)
     img_a = cv2.imread(str(a_path))
     img_b = cv2.imread(str(b_path))
     total_gap = frame_diff_score(img_a, img_b)
@@ -138,10 +144,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input", help="Eingabevideo")
     ap.add_argument("output", help="Ausgabevideo (ein Frame länger pro Sprungstelle)")
-    ap.add_argument("--threshold", type=float, default=3.0)
-    ap.add_argument("--frames", type=str, default=None,
+    ap.add_argument("--threshold", type=positive_float, default=3.0)
+    ap.add_argument("--include-scene-cuts", action="store_true", help="Szenenschnitt-Filter deaktivieren")
+    ap.add_argument("--frames", type=frame_indices, default=None,
                      help="Kommagetrennte Liste von Sprung-Frame-Indizes (überschreibt Auto-Erkennung)")
-    ap.add_argument("--candidates", type=int, default=7,
+    ap.add_argument("--candidates", type=positive_int, default=7,
                      help="Anzahl Kandidaten-Zeitpunkte pro Sprungstelle (default 7, wie Faktor 8)")
     ap.add_argument("--rife-bin", type=str, required=True)
     ap.add_argument("--rife-model", type=str, default=None)
@@ -156,13 +163,14 @@ def main():
                      help="Workdir vor dem Lauf leeren (z.B. wenn sich die Sprungstellen "
                           "seit dem letzten Lauf geändert haben)")
     args = ap.parse_args()
+    validate_input(args, ap)
 
     if not shutil.which(args.rife_bin) and not Path(args.rife_bin).exists():
         sys.exit(f"rife-ncnn-vulkan nicht gefunden unter: {args.rife_bin}\n"
                   f"Lade es von https://github.com/nihui/rife-ncnn-vulkan/releases")
 
-    if args.frames:
-        seam_frames = sorted(set(int(x) for x in args.frames.split(",")))
+    if args.frames is not None:
+        seam_frames = args.frames
         cap = cv2.VideoCapture(args.input)
         fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
         cap.release()
@@ -170,6 +178,8 @@ def main():
         print("Erkenne Sprungstellen ...")
         scores, fps = compute_motion_scores(args.input)
         seam_frames = find_jumps(scores, args.threshold)
+        if not args.include_scene_cuts:
+            seam_frames = exclude_scene_cuts(args.input, seam_frames)
         print(f"{len(seam_frames)} Sprungstellen gefunden: {seam_frames}")
 
     if not seam_frames:
@@ -185,46 +195,21 @@ def main():
         out_path = Path(args.output)
         work_dir = out_path.parent / f"{out_path.stem}_work"
 
-    if args.clean and work_dir.exists():
-        print(f"Leere vorhandenen Workdir {work_dir} ...")
-        shutil.rmtree(work_dir)
-
-    frames_dir = work_dir / "frames"
-    new_dir = work_dir / "frames_new"
-    cand_dir = work_dir / "candidates"
-
-    # frames_dir bleibt zwischen Läufen erhalten (teure Extraktion), new_dir/cand_dir
-    # werden bei jedem Lauf neu aufgebaut, damit keine Frames von einem vorherigen
-    # Lauf mit anderen Sprungstellen stehen bleiben.
-    if new_dir.exists():
-        shutil.rmtree(new_dir)
-    if cand_dir.exists():
-        shutil.rmtree(cand_dir)
-    frames_dir.mkdir(parents=True, exist_ok=True)
-    new_dir.mkdir(parents=True, exist_ok=True)
-    cand_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Projektordner für Zwischendateien: {work_dir.resolve()}")
-
-    # Frames nur extrahieren, wenn noch nicht vorhanden (z.B. von einem vorherigen Lauf) -
-    # spart Zeit, wenn man nur --candidates o.ä. neu ausprobiert.
-    existing = len(list(frames_dir.glob("frame_*.png")))
-    if existing == 0:
-        print(f"Extrahiere alle Frames verlustfrei nach {frames_dir} ...")
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", args.input, "-vsync", "0", str(frames_dir / "frame_%06d.png")],
-            check=True, capture_output=True,
-        )
-    else:
-        print(f"{existing} bereits extrahierte Frames in {frames_dir} gefunden, überspringe Extraktion "
-              f"(--clean erzwingt eine Neu-Extraktion).")
-    n_frames = len(list(frames_dir.glob("frame_*.png")))
+    try:
+        work_dir = prepare_workdir(work_dir, args.input, args.output)
+        frames_dir, n_frames = cached_frames(work_dir, args.input, args.clean)
+        validate_frames(seam_frames, n_frames)
+        new_dir = reset_owned_dir(work_dir, 'frames_new')
+        cand_dir = reset_owned_dir(work_dir, 'candidates')
+    except ValueError as exc:
+        ap.error(str(exc))
     print(f"{n_frames} Frames extrahiert.")
 
     def orig_path(idx0):
         idx0 = max(0, min(idx0, n_frames - 1))
         return frames_dir / f"frame_{idx0 + 1:06d}.png"
 
-    seam_set = set(f for f in seam_frames if f + 1 < n_frames)
+    seam_set = set(seam_frames)
     out_idx = 1
 
     print(f"Suche pro Sprungstelle den besten von {args.candidates} Kandidaten-Frames ...")
@@ -234,13 +219,15 @@ def main():
         if i in seam_set:
             a_path, b_path = orig_path(i), orig_path(i + 1)
             worst, t, cand_img, left, right = find_best_candidate(
-                a_path, b_path, args.candidates, args.rife_bin, args.rife_model, cand_dir
+                a_path, b_path, args.candidates, args.rife_bin, args.rife_model,
+                cand_dir / f'seam_{i:06d}'
             )
             total_gap = frame_diff_score(cv2.imread(str(a_path)), cv2.imread(str(b_path)))
             print(f"  Sprung {i + 1:06d}->{i + 2:06d}: bester t={t:.3f} "
                   f"(gap vorher={total_gap:.2f}, links={left:.2f}, rechts={right:.2f})")
             out_p = new_dir / f"frame_{out_idx:06d}.png"
-            cv2.imwrite(str(out_p), cand_img)
+            if not cv2.imwrite(str(out_p), cand_img):
+                sys.exit(f'Frame konnte nicht gespeichert werden: {out_p}')
             out_idx += 1
 
     new_total = out_idx - 1

@@ -43,6 +43,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from seam_utils import (positive_int, positive_float, frame_indices, validate_input,
+                        validate_frames, exclude_scene_cuts)
 
 
 def compute_motion_scores(path, resize_width=320):
@@ -109,10 +111,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input", help="Eingabevideo")
     ap.add_argument("output", help="Ausgabevideo (repariert, länger als das Original)")
-    ap.add_argument("--threshold", type=float, default=3.0)
-    ap.add_argument("--frames", type=str, default=None,
+    ap.add_argument("--threshold", type=positive_float, default=3.0)
+    ap.add_argument("--include-scene-cuts", action="store_true")
+    ap.add_argument("--frames", type=frame_indices, default=None,
                      help="Kommagetrennte Liste von Sprung-Frame-Indizes (überschreibt Auto-Erkennung)")
-    ap.add_argument("--factor", type=int, default=4,
+    ap.add_argument("--factor", type=positive_int, default=4,
                      help="Interpolationsfaktor an jeder Sprungstelle: factor-1 neue Frames "
                           "werden zwischen Frame i und i+1 eingefügt (default 4 -> 3 neue Frames)")
     ap.add_argument("--rife-bin", type=str, required=True)
@@ -122,13 +125,16 @@ def main():
     ap.add_argument("--no-stretch-audio", dest="stretch_audio", action="store_false")
     ap.add_argument("--keep-frames", action="store_true")
     args = ap.parse_args()
+    if args.factor < 2:
+        ap.error('--factor muss mindestens 2 sein.')
+    validate_input(args, ap)
 
     if not shutil.which(args.rife_bin) and not Path(args.rife_bin).exists():
         sys.exit(f"rife-ncnn-vulkan nicht gefunden unter: {args.rife_bin}\n"
                   f"Lade es von https://github.com/nihui/rife-ncnn-vulkan/releases")
 
-    if args.frames:
-        seam_frames = sorted(set(int(x) for x in args.frames.split(",")))
+    if args.frames is not None:
+        seam_frames = args.frames
         cap = cv2.VideoCapture(args.input)
         fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
         cap.release()
@@ -136,6 +142,8 @@ def main():
         print("Erkenne Sprungstellen ...")
         scores, fps = compute_motion_scores(args.input)
         seam_frames = find_jumps(scores, args.threshold)
+        if not args.include_scene_cuts:
+            seam_frames = exclude_scene_cuts(args.input, seam_frames)
         print(f"{len(seam_frames)} Sprungstellen gefunden: {seam_frames}")
 
     if not seam_frames:
@@ -146,7 +154,7 @@ def main():
     orig_duration = ffprobe_duration(args.input)
 
     tmp_ctx = tempfile.TemporaryDirectory()
-    work_dir = Path(tmp_ctx.name) if not args.keep_frames else Path("insert_seams_frames")
+    work_dir = Path(tmp_ctx.name) if not args.keep_frames else Path(tempfile.mkdtemp(prefix="insert_seams_frames_", dir="."))
     frames_dir = work_dir / "frames"
     new_dir = work_dir / "frames_new"
     frames_dir.mkdir(parents=True, exist_ok=True)
@@ -158,6 +166,7 @@ def main():
         check=True, capture_output=True,
     )
     n_frames = len(list(frames_dir.glob("frame_*.png")))
+    validate_frames(seam_frames, n_frames)
     print(f"{n_frames} Frames extrahiert.")
 
     def orig_path(idx0):

@@ -1,0 +1,50 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*_work/
+fix_seams_frames*/
+insert_seams_frames*/
+score_per_frame.csv
+.test-output/
+
+# Local media and extracted/generated frames (may contain private content).
+*.[mM][pP]4
+*.[mM][oO][vV]
+*.[mM][kK][vV]
+*.[aA][vV][iI]
+*.[wW][eE][bB][mM]
+frame_*.png
+cand_*.png
+frames/
+frames_new/
+candidates/
+.seedance-work.json
+frames.json
+frames.tmp
+
+# Downloaded RIFE runtime/models remain local; retain upstream attribution.
+/rife-ncnn-vulkan/*
+!/rife-ncnn-vulkan/README.md
+!/rife-ncnn-vulkan/LICENSE
+
+# Credentials, machine-specific settings and generated desktop launcher.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.codex/
+.agents/
+.vscode/
+.idea/
+Seedance Frame Fix.cmd
+*.log
+*.tmp
+Thumbs.db
+Desktop.ini
+.DS_Store
