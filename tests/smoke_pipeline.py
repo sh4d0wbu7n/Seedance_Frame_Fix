@@ -29,4 +29,4 @@ report = json.loads((WORK / 'fixed_work/repair_report.json').read_text())
 assert report['candidate_count'] == 1
 assert report['output_frames'] == 26
 assert [row['frame_index'] for row in report['seams']] == [5, 15]
-print('SMOKE OK: 24 -> 26 Frames, Audio vorhanden, Cache erneut verwendet, Kandidaten getrennt.')
+print('SMOKE OK: 24 -> 26 frames, audio present, cache reused, candidates stored separately.')

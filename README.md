@@ -1,65 +1,62 @@
 # Seedance Seam Fix
 
-Behebt periodische "Ruckler" in KI-generierten Videos (z. B. Seedance 2.5), die
-durch Chunk-Grenzen in der Video-Diffusions-Generierung entstehen — **kein**
-Problem mit doppelten/fehlenden Frames, sondern ein echter, kleiner
-Bewegungssprung an regelmäßigen Stellen im Video (bei Seedance meist alle ~24
-Frames / ~1 Sekunde).
+Fixes periodic stutters in AI-generated videos (such as Seedance 2.5) associated
+with chunk boundaries in video diffusion generation. These are **not** duplicate
+or missing frames: they are small motion discontinuities at regular intervals
+(typically about 24 frames / one second in the observed Seedance footage).
 
-Der Fix: Sprungstellen automatisch erkennen, dort per KI (RIFE) den optimalen
-Zwischenframe berechnen und **genau einen Frame** einfügen. Das Video wird
-dadurch pro Sprungstelle um 1 Frame länger, der Sprung verteilt sich auf zwei
-kleinere Bewegungsschritte statt einen abrupten.
+The fix detects these transitions, generates the best intermediate frame with
+RIFE, and inserts **exactly one frame** per transition. The video becomes one
+frame longer per repair, distributing the jump over two smaller motion steps.
 
-## Voraussetzungen
+## Requirements
 
 - Python 3.9+
-- [ffmpeg](https://ffmpeg.org/download.html) (im PATH verfügbar)
-- [rife-ncnn-vulkan](https://github.com/nihui/rife-ncnn-vulkan/releases) —
-  portables Kommandozeilen-Tool, kein CUDA/PyTorch nötig, läuft auf
-  Windows/Linux/macOS über Vulkan
+- [FFmpeg](https://ffmpeg.org/download.html), available on PATH
+- [rife-ncnn-vulkan](https://github.com/nihui/rife-ncnn-vulkan/releases):
+  a portable command-line tool using Vulkan on Windows/Linux/macOS.
+  No CUDA or PyTorch installation is required.
 
 ## Installation
 
 ```bash
-git clone <dieses-repo>
+git clone <this-repository>
 cd seedance-seam-fix
 
 python3 -m venv venv
 # macOS/Linux:
 source venv/bin/activate
-# Windows (PowerShell — falls Execution Policy blockt: erst einmalig
-# `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`):
+# Windows (PowerShell; if execution policy blocks activation, first run
+# Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser):
 venv\Scripts\Activate.ps1
 
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-`requirements.txt`:
-```
+`requirements.txt` contains:
+
+```text
 opencv-python-headless
 numpy
 ```
 
-RIFE herunterladen und entpacken (z. B. nach `./rife-ncnn-vulkan/`):
-https://github.com/nihui/rife-ncnn-vulkan/releases
-Das Zip enthält die ausführbare Datei (`rife-ncnn-vulkan` bzw. `.exe`) sowie
-die Modellordner (z. B. `rife-v4.6`). Portabel, keine weitere Installation
-nötig.
+Download and extract [RIFE](https://github.com/nihui/rife-ncnn-vulkan/releases),
+for example into `./rife-ncnn-vulkan/`. The ZIP includes the executable
+(`rife-ncnn-vulkan` or `.exe`) and model directories such as `rife-v4.6`.
+It is portable and requires no further installation.
 
-## Nutzung
+## Usage
 
-### Windows: Desktop-Launcher
+### Windows desktop launcher
 
-`Seedance Frame Fix.cmd` auf dem Desktop per Doppelklick starten und ein Video
-auswaehlen; alternativ eine Videodatei auf den Launcher ziehen. Das Ergebnis
-landet neben der Eingabe als `<name>_fixed.mp4`. Bereits vorhandene Ergebnisse
-werden durch nummerierte Dateinamen geschuetzt. Ohne erkannte Sprungstellen
-wird keine neue Datei erzeugt.
+Double-click `Seedance Frame Fix.cmd` on the desktop and select a video,
+or drag a video onto the launcher. The result is saved next to the input as
+`<name>_fixed.mp4`. Numbered filenames protect existing results.
+If no seams are detected, no output file is created.
 
-Der Launcher verwendet `.venv\Scripts\python.exe` und das lokal heruntergeladene Modell
-`rife-v4.6`. FFmpeg und FFprobe muessen im PATH liegen. Zum erneuten Einrichten:
+The launcher uses `.venv\Scripts\python.exe` and the locally downloaded
+`rife-v4.6` model. FFmpeg and FFprobe must be on PATH. To set it up again:
 
 ```powershell
 uv venv --python 3.12 --seed .venv
@@ -67,28 +64,28 @@ uv venv --python 3.12 --seed .venv
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install_desktop_launcher.ps1
 ```
 
-Der Installer ueberschreibt keinen vorhandenen Desktop-Launcher. Alternativ
-laesst sich `launch.ps1` direkt ausfuehren.
+The installer will not overwrite an existing desktop launcher.
+You can also run `launch.ps1` directly.
 
-### 1. Sprungstellen finden (optional, zur Kontrolle)
+### 1. Find seams (optional inspection)
 
 ```bash
 python3 find_seams.py input.mp4
 ```
 
-Analysiert die Bewegung zwischen aufeinanderfolgenden Frames und meldet
-auffällige Sprünge sowie eine erkannte Periodizität, z. B.:
+Analyzes motion between consecutive frames and reports unusual jumps and any
+detected periodicity, for example:
 
-```
-22 auffällige Sprungstellen gefunden (Übergang Frame i -> i+1):
+```text
+22 suspicious seams found (transition from frame i -> i+1):
   Frame    95 ->    96   (t=  3.96s)   score=7.60
   ...
-Wahrscheinliche Periodizität: alle ~24 Frames (~1.00s bei 24.0 fps)
+Likely periodicity: every ~24 frames (~1.00s at 24.0 fps)
 ```
 
-Rohdaten landen zusätzlich in `score_per_frame.csv` zum manuellen Nachschauen.
+Raw scores are also saved to `score_per_frame.csv` for manual inspection.
 
-### 2. Reparieren (Hauptscript)
+### 2. Repair the video (main script)
 
 ```bash
 python3 insert_best_frame.py input.mp4 output.mp4 \
@@ -96,138 +93,133 @@ python3 insert_best_frame.py input.mp4 output.mp4 \
   --rife-model rife-ncnn-vulkan/rife-v4.6
 ```
 
-Das Script:
-1. erkennt Sprungstellen automatisch (gleiche Logik wie `find_seams.py`),
-2. erzeugt pro Sprungstelle mehrere RIFE-Kandidatenframes an verschiedenen
-   Zeitpunkten zwischen Frame i und i+1,
-3. wählt den Kandidaten, bei dem der Bewegungssprung auf beide Seiten am
-   gleichmäßigsten verteilt ist,
-4. fügt **genau diesen einen Frame** ein (Video wird dadurch um die Anzahl
-   der Sprungstellen länger),
-5. encodet das Ergebnis einmalig verlustarm (CRF, Standard 14) und streckt
-   den Ton proportional, damit er synchron bleibt.
+The script:
 
-**Wichtige Optionen:**
+1. Detects seams automatically using the same logic as `find_seams.py`.
+2. Generates several RIFE candidates at different times between frames i and i+1.
+3. Selects the candidate that distributes the remaining motion jump most evenly.
+4. Inserts **exactly that one frame**, increasing the frame count by the number of seams.
+5. Encodes the result once at high quality (CRF 14 by default) and stretches
+   audio proportionally to maintain approximate synchronization.
 
-| Flag | Bedeutung |
+**Key options:**
+
+| Flag | Meaning |
 |---|---|
-| `--candidates N` | Anzahl Kandidaten-Zeitpunkte pro Sprungstelle (default 7) |
-| `--frames 95,119,...` | Sprungstellen manuell vorgeben statt Auto-Erkennung |
-| `--threshold` | Empfindlichkeit der Auto-Erkennung (kleiner = empfindlicher) |
-| `--crf` | Finale Videoqualität, niedriger = besser (default 14) |
-| `--workdir` | Ordner für Zwischendateien (default `<output>_work/`) |
-| `--clean` | Workdir vor dem Lauf leeren (z. B. nach geänderten Sprungstellen) |
-| `--no-stretch-audio` | Ton nicht strecken, bleibt unverändert |
-| `--include-scene-cuts` | Automatischen Szenenschnitt-Filter deaktivieren |
-| `--min-relative-jump` | Mindestanstieg gegen die lokale Bewegung (default 0.10 = 10 %) |
-| `--no-periodic-recovery` | Keine schwaecheren Spitzen auf einem sicher erkannten Periodenraster ergaenzen |
+| `--candidates N` | Candidate timestamps per seam (default: 7) |
+| `--frames 95,119,...` | Supply seam indices manually instead of automatic detection |
+| `--threshold` | Detection sensitivity; lower values are more sensitive |
+| `--crf` | Final video quality; lower is better (default: 14) |
+| `--workdir` | Intermediate-file directory (default: `<output>_work/`) |
+| `--clean` | Refresh managed working files before running, for example after changing seams |
+| `--no-stretch-audio` | Leave audio unchanged |
+| `--include-scene-cuts` | Disable the automatic scene-cut filter |
+| `--min-relative-jump` | Minimum increase over local motion (default: 0.10 = 10%) |
+| `--no-periodic-recovery` | Do not recover weaker peaks on a confidently detected periodic grid |
 
-### Startparameter nach Shot-Typ
+### Starting parameters by shot type
 
-Die Standardwerte wurden an einem durchgehenden, schnellen Seedance-Kameraflug
-mit feinen Landschaftstexturen getestet und vom Nutzer als gutes Ergebnis
-bestaetigt. Die anderen Kombinationen sind begruendete Startpunkte zum Ausprobieren,
-keine an mehreren Videos validierten Presets. Zuerst mit `find_seams.py` und
-denselben Erkennungsparametern die Treffer pruefen; danach reparieren.
+The defaults were tested on a continuous, fast Seedance camera flight with fine
+landscape textures, and the user confirmed a good result. Other combinations
+below are reasoned starting points, **not presets validated across multiple
+videos**. First inspect detections with `find_seams.py` using the same detection
+parameters, then run the repair.
 
-| Shot / Situation | Parameter fuer den Start | Warum / worauf achten |
+| Shot / situation | Starting parameters | Reason / what to watch for |
 |---|---|---|
-| Durchgehender FPV-Flug, Kamerafahrt oder Zoom mit regelmaessigen Rucklern | `--threshold 3 --min-relative-jump 0.10 --candidates 7 --crf 14` | Getesteter Ausgangspunkt. Der Mindestanstieg unterdrueckt sehr schwache Ausreisser; periodische Ergaenzung bleibt aktiv und findet schwaechere Spitzen auf einem stabilen Raster. |
-| Ruhiger oder fast statischer Shot, nur vereinzelte verdaechtige Stellen | `--threshold 4 --min-relative-jump 0.20 --no-periodic-recovery --candidates 7` | Konservativer Start: kleine Schwankungen sollen keine zusaetzlichen Frames ausloesen. Echte subtile Spruenge koennen dabei uebersehen werden; Treffer visuell kontrollieren. |
-| Unregelmaessige Action, Schwenks, abrupte Beschleunigung oder starke Lichtwechsel | `--threshold 3.5 --min-relative-jump 0.15 --no-periodic-recovery --candidates 7` | Normale Bewegungs- oder Helligkeitsspitzen koennen wie Fehler aussehen. Keine Ergaenzung anhand einer angenommenen Periode; zweifelhafte Treffer besser per `--frames` eingrenzen. |
-| Sichtbare, aber von den Standards uebersehene kleine Ruckler | `--threshold 2.5 --min-relative-jump 0.05 --no-periodic-recovery --candidates 7` | Empfindlicher Suchlauf, der mehr Fehlalarme zulassen kann. Nur verwenden, wenn die Spruenge bereits sichtbar sind; nicht pauschal auf jedes Video anwenden. |
-| Montage mit echten Schnitten oder wechselnden Shots | Shots getrennt bearbeiten; alternativ `--frames 95,119` mit den tatsaechlich geprueften Indizes | Schnittfilter eingeschaltet lassen. Manuelle Indizes umgehen den Filter, deshalb niemals einen echten Schnitt als Reparaturstelle eintragen. Beispielindizes nicht ungeprueft uebernehmen. |
-| Dialog / lippensynchroner Ton | Zunaechst `--frames ... --candidates 7`, danach Bild und Ton lokal kontrollieren | Jede Einfuegung verschiebt die Bildzeit. Globale Audiostreckung ist nur eine Naeherung; kein Erkennungsparameter garantiert Lippensynchronitaet. `--no-stretch-audio` ist nur sinnvoll, wenn der Ton spaeter separat angepasst oder ersetzt wird. |
+| Continuous FPV flight, tracking shot, or zoom with regular stutters | `--threshold 3 --min-relative-jump 0.10 --candidates 7 --crf 14` | Tested starting point. The minimum increase suppresses very weak outliers; periodic recovery remains enabled to find weaker peaks on a stable grid. |
+| Quiet or nearly static shot with isolated suspicious transitions | `--threshold 4 --min-relative-jump 0.20 --no-periodic-recovery --candidates 7` | Conservative start to avoid adding frames for small fluctuations. Subtle real jumps can be missed; inspect detections visually. |
+| Irregular action, pans, sudden acceleration, or strong lighting changes | `--threshold 3.5 --min-relative-jump 0.15 --no-periodic-recovery --candidates 7` | Normal motion or brightness peaks can resemble defects. Avoid recovery based on an assumed period; narrow questionable detections with `--frames`. |
+| Visible small stutters missed by the defaults | `--threshold 2.5 --min-relative-jump 0.05 --no-periodic-recovery --candidates 7` | A more sensitive search that may admit more false positives. Use only for already visible jumps, not indiscriminately on every video. |
+| Montage with real cuts or changing shots | Process shots separately, or use `--frames 95,119` with actually inspected indices | Keep the cut filter enabled. Manual indices bypass it, so never include an intentional cut. Do not copy the example indices without checking. |
+| Dialogue / lip-synced audio | Start with `--frames ... --candidates 7`, then inspect picture and sound locally | Each insertion shifts the video timeline. Global audio stretching is approximate; no detection parameter guarantees lip sync. Use `--no-stretch-audio` only if audio will be adjusted or replaced separately. |
 
-In der Tabelle nicht genannte Werte bleiben auf Standard, insbesondere CRF 14
-und der aktivierte Szenenschnitt-Filter. Die Kriterien sind kombiniert:
-`--threshold` allein abzusenken hilft nicht, wenn der relative Mindestanstieg
-weiterhin unterschritten wird. Fuer stark wechselnde Shots gibt es daher kein
-universelles einzelnes Empfindlichkeits-Flag.
+Unspecified values retain their defaults, particularly CRF 14 and the enabled
+scene-cut filter. Detection criteria work together: lowering `--threshold`
+alone does not help if the relative increase is still below its minimum.
+There is no universal single sensitivity flag for shots with highly variable motion.
 
-`--candidates 1` ist eine schnelle Vorschau mit ausschliesslich `t=0.5`.
-Fuer die finale Fassung bei 7 bleiben: Im Realtest gewann an einer Stelle
-`t=0.375`, waehrend an den anderen Stellen `t=0.5` besser war. Mehr Kandidaten
-aendern die Trefferliste nicht und ersetzen keine bessere Erkennung.
-CRF steuert nur die Encoding-Qualitaet, nicht die Staerke der Reparatur.
+`--candidates 1` provides a fast preview using only `t=0.5`.
+Keep 7 for final output: in the real-video test, `t=0.375` won at one seam,
+while `t=0.5` was better at the others. More candidates do not change the
+detected seam list or replace better detection. CRF controls encoding quality,
+not repair strength.
 
-Beispiel fuer einen konservativen Lauf unter Windows:
+Example of a conservative run on Windows:
 
 ```powershell
 .\.venv\Scripts\python.exe find_seams.py input.mp4 --threshold 4 --min-relative-jump 0.20 --no-periodic-recovery
 .\.venv\Scripts\python.exe insert_best_frame.py input.mp4 output.mp4 --rife-bin rife-ncnn-vulkan/rife-ncnn-vulkan.exe --rife-model rife-ncnn-vulkan/rife-v4.6 --threshold 4 --min-relative-jump 0.20 --no-periodic-recovery --candidates 7
 ```
 
-Der Desktop-Launcher verwendet die Standardwerte. Fuer abweichende Parameter
-das Python-Script wie oben direkt aufrufen.
+The desktop launcher uses the defaults. For custom parameters, invoke the
+Python script directly as shown above.
 
-**Zwischendateien** (extrahierte Originalframes, alle getesteten Kandidaten,
-finale Sequenz) landen in `<output>_work/` und werden **nicht** automatisch
-gelöscht — praktisch, um einzelne Kandidaten manuell zu prüfen oder
-nachzubessern, und um bei einem erneuten Lauf die teure Frame-Extraktion zu
-überspringen.
+**Intermediate files** (extracted originals, all tested candidates, and the
+final sequence) are saved in `<output>_work/` and are **not deleted automatically**.
+This allows manual inspection or refinement and avoids repeating expensive
+frame extraction on subsequent runs.
 
-Der Cache wird nur wiederverwendet, wenn der SHA-256-Fingerabdruck der Eingabe
-und die vollstaendige Frame-Dateiliste mit Dateigroessen passen. Eine abgebrochene
-Extraktion wird neu gestartet. `--clean` erneuert nur verwaltete Unterordner;
-andere Dateien im Workdir bleiben erhalten. Nicht leere Arbeitsordner ohne
-Projektmarkierung (auch aus alten Versionen) werden abgelehnt: dafuer einen
-neuen Workdir angeben. Eingabe, Ausgabe und Projekt duerfen nicht im Workdir liegen.
-Kandidaten liegen getrennt unter `candidates/seam_<Index>/`; Indizes sind nullbasiert.
+The cache is reused only when the input SHA-256 fingerprint and the complete
+frame-file list with file sizes match. Interrupted extraction is restarted.
+`--clean` refreshes only managed subdirectories; other working-directory files
+are preserved. Nonempty directories without a project marker, including those
+from older versions, are rejected: select a new working directory.
+The input, output, and project must not be inside the working directory.
+Candidates are stored separately under `candidates/seam_<index>/`; indices are zero-based.
 
-Die Periodenschaetzung verlangt mindestens drei gleiche Abstaende mit mindestens
-60 Prozent Anteil und zeigt diesen Anteil an. Sie beweist keine Modell-Fenstergroesse.
+Period estimation requires at least three equal intervals accounting for at
+least 60% of the intervals, and reports this fraction. It does not prove a
+model window size.
 
-Die Erkennung kombiniert Z-Score und Mindestanstieg, damit fast konstante Bewegung
-nicht schon bei minimalen Abweichungen zu Reparaturen fuehrt. Bei mindestens vier
-starken Treffern mit stabiler Periode und Phase koennen schwaechere lokale Spitzen
-ergaenzt werden. Diese brauchen weiterhin mindestens 15 % relativen Anstieg,
-0.5 Graustufen absoluten Anstieg und einen Z-Score von mindestens 1 (bzw. den
-niedrigeren expliziten Schwellwert). Ein Rasterpunkt allein reicht nicht.
-Der gemeldete Periodenanteil basiert ausschliesslich auf den starken Treffern.
-Das bisherige reine Z-Score-Verhalten ist mit
-`--min-relative-jump 0 --no-periodic-recovery` reproduzierbar.
+Detection combines a Z-score with a minimum increase so that tiny deviations in
+nearly constant motion do not automatically trigger repairs. With at least four
+strong detections on a stable period and phase, weaker peaks can be recovered.
+Each still requires at least a 15% relative increase, 0.5 grayscale levels of
+absolute increase, and a Z-score of at least 1 (or a lower explicitly chosen
+threshold). A grid position alone is insufficient. The reported periodicity
+fraction is based only on strong detections.
+Reproduce the previous Z-score-only behavior with
+`--min-relative-jump 0 --no-periodic-recovery`.
 
-Nach erfolgreichem Encoding enthaelt `<output>_work/repair_report.json` pro
-Sprungstelle den gewaehlten Zeitpunkt und den Bewegungsscore vor/nach Einfuegen.
-Die Pixeldifferenz ist nur eine Vergleichsmetrik, kein Beweis fuer bessere
-wahrgenommene Bildqualitaet oder fehlerfreie Interpolation.
+After successful encoding, `<output>_work/repair_report.json` records each seam's
+chosen timestamp and motion scores before and after insertion.
+Pixel difference is only a comparison metric, not proof of better perceived
+quality or artifact-free interpolation.
 
-### Lokale Evaluation
+### Local evaluation
 
 ```powershell
 .\.venv\Scripts\python.exe evaluate_video.py input.mp4 --output .test-output/evaluation --candidates output_work/candidates
 ```
 
-Erzeugt JSON-Messdaten und Kontaktbilder. `--candidates` ist optional; zum
-Bewerten vorhandener Kandidaten muessen daneben auch die extrahierten
-Originale im Ordner `frames/` vorhanden sein. Fuer private Videos die
-Auswertung im ignorierten `.test-output/` belassen.
+Produces JSON measurements and contact sheets. `--candidates` is optional.
+To evaluate existing candidates, the extracted originals must also be present
+in the adjacent `frames/` directory. Keep evaluations of private videos inside
+the ignored `.test-output/` directory.
 
-### Weitere Scripts im Repo (ältere/alternative Ansätze)
+### Other scripts (older / alternative approaches)
 
-- `fix_seams.py` — ersetzt (statt einzufügen) die 2 Frames an jeder
-  Sprungstelle, Video bleibt gleich lang. Führt bei starken Sprüngen zu
-  sichtbar abrupteren Übergängen als `insert_best_frame.py`, da die komplette
-  Bewegung in dieselbe kurze Zeitspanne gepresst wird.
-- `insert_seams.py` — fügt pauschal `factor - 1` Frames pro Sprungstelle ein
-  (kein Auswahlschritt). Vorläufer von `insert_best_frame.py`.
+- `fix_seams.py`: replaces two frames at each seam instead of inserting frames.
+  Duration stays unchanged. Strong jumps can remain more abrupt than with
+  `insert_best_frame.py`, because all motion must fit into the same short interval.
+- `insert_seams.py`: inserts `factor - 1` frames per seam without selecting a
+  single candidate. Predecessor to `insert_best_frame.py`.
 
-Empfehlung: **`insert_best_frame.py` verwenden**, liefert bisher die besten
-Ergebnisse (siehe `HANDOVER.md` für Details zur Entwicklungsgeschichte).
+Use **`insert_best_frame.py`** for the best results observed so far.
+See `HANDOVER.md` for development history and reasoning.
 
-## Bekannte Einschränkungen
+## Known limitations
 
-- Ein konservativer Szenenschnitt-Filter laesst Uebergaenge mit gleichzeitig
-  grosser Pixeldifferenz und stark abweichender Farbverteilung aus. Die Heuristik
-  kann Schnitte uebersehen und starke Lichtwechsel falsch einordnen. Mit
-  `--include-scene-cuts` abschaltbar; explizite `--frames` umgehen den Filter.
-- Bei sehr großem Bewegungssprung (Score weit über dem Rest, typischerweise
-  gegen Ende einer langen Seedance-Generierung durch akkumulierenden Drift)
-  kann selbst der beste RIFE-Kandidat den Sprung nicht vollständig kaschieren.
+- The conservative scene-cut filter skips transitions with both large pixel
+  differences and very different color distributions. It can miss cuts or
+  misclassify strong lighting changes. Disable it with `--include-scene-cuts`;
+  explicit `--frames` bypass the filter.
+- For very large motion jumps (scores far above the rest, typically toward the
+  end of long Seedance generations with accumulated drift), even the best RIFE
+  candidate may not fully hide the discontinuity.
 
-Mehr Kontext, offene Fragen und Ideen für Weiterentwicklung: siehe
-`HANDOVER.md`.
+See `HANDOVER.md` for further context, open questions, and development ideas.
 
 ## Tests
 
@@ -236,14 +228,14 @@ Mehr Kontext, offene Fragen und Ideen für Weiterentwicklung: siehe
 .\.venv\Scripts\python.exe tests\smoke_pipeline.py
 ```
 
-Der zweite Test benoetigt FFmpeg, FFprobe und das lokal installierte Windows-RIFE.
-Er erzeugt ein kurzes Testvideo unter `.test-output/`, prueft Framezahl und Audio
-und fuehrt die Verarbeitung erneut aus, um die Cache-Wiederverwendung zu pruefen.
+The second test requires FFmpeg, FFprobe, and a locally installed Windows RIFE.
+It generates a short test video in `.test-output/`, checks frame count and
+audio, and reruns processing to check cache reuse.
 
-## Dateien im oeffentlichen Repository
+## Files in the public repository
 
-Virtuelle Umgebungen, lokale Einstellungen, Videos, generierte Frames und
-heruntergeladene RIFE-Binaerdateien/Modelle werden nicht versioniert.
-RIFE vor dem ersten Start wie unter Installation beschrieben herunterladen und
-nach `rife-ncnn-vulkan/` entpacken. Dessen README und Lizenz bleiben im Repository.
-Tests erzeugen ihre Videodaten lokal; private Beispielvideos sind nicht erforderlich.
+Virtual environments, local settings, videos, generated frames, and downloaded
+RIFE binaries/models are not versioned. Before the first run, download RIFE as
+described under Installation and extract it into `rife-ncnn-vulkan/`.
+Its README and license remain in the repository.
+Tests generate their video data locally; private sample videos are not required.

@@ -1,37 +1,30 @@
 #!/usr/bin/env python3
 """
-insert_seams.py — automatisiert genau den manuellen Workflow: an jeder
-Sprungstelle werden per RIFE zusätzliche Zwischenframes erzeugt und
-EINGEFÜGT (nicht ersetzt). Das Video wird dadurch an jeder Stelle um ein
-paar Frames länger, der Sprung verteilt sich über mehrere Frames statt
-in einem einzigen abrupten Schnitt zu passieren -> deutlich weicher, auch
-bei echten Inhaltssprüngen (nicht nur bei reinen Interpolationsfehlern).
+insert_seams.py - automates the manual workflow of generating extra RIFE
+frames at each seam and INSERTING them rather than replacing frames.
+The video becomes a few frames longer per seam, spreading the motion jump
+across several frames for a smoother transition, including genuine content
+jumps rather than only interpolation artifacts.
 
-Im Gegensatz zu fix_seams.py wird hier NICHTS aus dem Originalvideo entfernt
-oder überschrieben - nur zusätzliche Frames werden zwischen Frame i und
-Frame i+1 eingefügt, exakt an den erkannten Sprungstellen.
+Unlike fix_seams.py, this script does not remove or overwrite original frames.
+It inserts new frames between i and i+1 at the detected seams.
 
-WICHTIG: braucht rife-ncnn-vulkan (fertige .exe/binary):
+Requires rife-ncnn-vulkan (standalone executable):
   https://github.com/nihui/rife-ncnn-vulkan/releases
 
-Nutzung:
+Usage:
   python3 insert_seams.py input.mp4 output.mp4 --rife-bin rife-ncnn-vulkan/rife-ncnn-vulkan.exe
 
-  --factor 4   (default) fügt 3 neue Frames pro Sprungstelle ein (so wie dein
-               manueller 4x-Ansatz). --factor 2 fügt nur 1 Frame ein (subtiler),
-               --factor 8 fügt 7 Frames ein (noch sanfter, Sprung wird noch
-               stärker gestreckt).
+  --factor 4   (default) adds 3 frames per seam, matching the manual 4x approach.
+               --factor 2 adds one frame for a subtler effect.
+               --factor 8 adds seven frames and stretches the transition further.
 
-  --frames 95,119,143,167   um die Sprungstellen manuell statt automatisch
-               vorzugeben (Frame-Index VOR dem Sprung, wie von find_seams.py
-               ausgegeben).
+  --frames 95,119,143,167   supplies seam indices manually instead of detecting
+               them (index BEFORE the jump, as reported by find_seams.py).
 
-Audio: falls das Video Ton hat, wird er standardmäßig gleichmäßig gestreckt
-(--stretch-audio, default an), damit die Gesamtlänge zum längeren Video passt.
-Da die Sprungstellen (typischerweise) regelmäßig über das Video verteilt sind,
-bleibt der Ton dadurch über das ganze Video hinweg näherungsweise synchron.
-Mit --no-stretch-audio bleibt der Ton unverändert (kann am Ende leicht
-vorher enden).
+Audio is stretched uniformly by default (--stretch-audio) to match the longer
+video. Approximately regular seam spacing keeps it approximately synchronized.
+--no-stretch-audio leaves the original audio unchanged, so it may end earlier.
 """
 
 import argparse
@@ -51,7 +44,7 @@ from seam_utils import (positive_int, positive_float, frame_indices, validate_in
 def compute_motion_scores(path, resize_width=320):
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
-        sys.exit(f"Konnte Video nicht öffnen: {path}")
+        sys.exit(f"Could not open video: {path}")
     fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
     scores = []
     prev_gray = None
@@ -75,7 +68,7 @@ def run_rife(a_path, b_path, out_path, t, rife_bin, rife_model):
         cmd += ["-m", rife_model]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0 or not out_path.exists():
-        sys.exit(f"RIFE-Aufruf fehlgeschlagen:\n{' '.join(cmd)}\n{result.stderr}")
+        sys.exit(f"RIFE invocation failed:\n{' '.join(cmd)}\n{result.stderr}")
 
 
 def ffprobe_has_audio(path):
@@ -94,15 +87,15 @@ def ffprobe_duration(path):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("input", help="Eingabevideo")
-    ap.add_argument("output", help="Ausgabevideo (repariert, länger als das Original)")
+    ap.add_argument("input", help="Input video")
+    ap.add_argument("output", help="Output video (repaired, longer than the original)")
     ap.add_argument("--threshold", type=positive_float, default=3.0)
     ap.add_argument("--include-scene-cuts", action="store_true")
     ap.add_argument("--frames", type=frame_indices, default=None,
-                     help="Kommagetrennte Liste von Sprung-Frame-Indizes (überschreibt Auto-Erkennung)")
+                     help="Comma-separated seam frame indices (override automatic detection)")
     ap.add_argument("--factor", type=positive_int, default=4,
-                     help="Interpolationsfaktor an jeder Sprungstelle: factor-1 neue Frames "
-                          "werden zwischen Frame i und i+1 eingefügt (default 4 -> 3 neue Frames)")
+                     help="Interpolation factor per seam: factor-1 new frames "
+                          "are inserted between i and i+1 (default: 4 -> 3 new frames)")
     ap.add_argument("--rife-bin", type=str, required=True)
     ap.add_argument("--rife-model", type=str, default=None)
     ap.add_argument("--crf", type=int, default=14)
@@ -112,12 +105,12 @@ def main():
     add_detection_options(ap)
     args = ap.parse_args()
     if args.factor < 2:
-        ap.error('--factor muss mindestens 2 sein.')
+        ap.error('--factor must be at least 2.')
     validate_input(args, ap)
 
     if not shutil.which(args.rife_bin) and not Path(args.rife_bin).exists():
-        sys.exit(f"rife-ncnn-vulkan nicht gefunden unter: {args.rife_bin}\n"
-                  f"Lade es von https://github.com/nihui/rife-ncnn-vulkan/releases")
+        sys.exit(f"rife-ncnn-vulkan not found at: {args.rife_bin}\n"
+                  f"Download it from https://github.com/nihui/rife-ncnn-vulkan/releases")
 
     if args.frames is not None:
         seam_frames = args.frames
@@ -125,15 +118,15 @@ def main():
         fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
         cap.release()
     else:
-        print("Erkenne Sprungstellen ...")
+        print("Detecting seams ...")
         scores, fps = compute_motion_scores(args.input)
         seam_frames = find_jumps(scores, args.threshold, min_relative_jump=args.min_relative_jump, recover_periodic=not args.no_periodic_recovery)
         if not args.include_scene_cuts:
             seam_frames = exclude_scene_cuts(args.input, seam_frames)
-        print(f"{len(seam_frames)} Sprungstellen gefunden: {seam_frames}")
+        print(f"{len(seam_frames)} seams found: {seam_frames}")
 
     if not seam_frames:
-        print("Keine Sprungstellen -> nichts zu tun.")
+        print("No seams found -> nothing to do.")
         return
 
     has_audio = ffprobe_has_audio(args.input)
@@ -146,14 +139,14 @@ def main():
     frames_dir.mkdir(parents=True, exist_ok=True)
     new_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Extrahiere alle Frames verlustfrei nach {frames_dir} ...")
+    print(f"Extracting all frames losslessly to {frames_dir} ...")
     subprocess.run(
         ["ffmpeg", "-y", "-i", args.input, "-vsync", "0", str(frames_dir / "frame_%06d.png")],
         check=True, capture_output=True,
     )
     n_frames = len(list(frames_dir.glob("frame_*.png")))
     validate_frames(seam_frames, n_frames)
-    print(f"{n_frames} Frames extrahiert.")
+    print(f"{n_frames} frames extracted.")
 
     def orig_path(idx0):
         idx0 = max(0, min(idx0, n_frames - 1))
@@ -163,8 +156,8 @@ def main():
     out_idx = 1
     total_inserted = 0
 
-    print(f"Baue neue Sequenz auf (Faktor {args.factor}, "
-          f"+{args.factor - 1} Frames pro Sprungstelle) ...")
+    print(f"Building the new sequence (factor {args.factor}, "
+          f"+{args.factor - 1} frames per seam) ...")
     for i in range(n_frames):
         shutil.copy(orig_path(i), new_dir / f"frame_{out_idx:06d}.png")
         out_idx += 1
@@ -173,23 +166,23 @@ def main():
             for k in range(1, args.factor):
                 t = k / args.factor
                 out_p = new_dir / f"frame_{out_idx:06d}.png"
-                print(f"  + Frame nach Original-Frame {i + 1:06d}: RIFE(t={t:.3f})")
+                print(f"  + Frame after original frame {i + 1:06d}: RIFE(t={t:.3f})")
                 run_rife(a_path, b_path, out_p, t, args.rife_bin, args.rife_model)
                 out_idx += 1
                 total_inserted += 1
 
     new_total = out_idx - 1
     new_duration = new_total / fps
-    print(f"\n{total_inserted} Frames eingefügt. "
+    print(f"\n{total_inserted} frames inserted. "
           f"{n_frames} -> {new_total} Frames "
-          f"({orig_duration:.2f}s -> {new_duration:.2f}s bei {fps} fps)")
+          f"({orig_duration:.2f}s -> {new_duration:.2f}s at {fps} fps)")
 
-    print(f"Finaler Encode (CRF {args.crf}) ...")
+    print(f"Final encode (CRF {args.crf}) ...")
     cmd = ["ffmpeg", "-y", "-framerate", str(fps), "-i", str(new_dir / "frame_%06d.png")]
     if has_audio:
         if args.stretch_audio:
-            tempo = orig_duration / new_duration  # <1 => atempo streckt (verlangsamt) den Ton
-            print(f"Ton wird um Faktor {tempo:.4f} gestreckt, um synchron zu bleiben.")
+            tempo = orig_duration / new_duration  # <1 => atempo stretches (slows down) the audio
+            print(f"Stretching audio with tempo factor {tempo:.4f} to maintain approximate synchronization.")
             cmd += ["-i", args.input, "-filter:a", f"atempo={tempo:.6f}",
                     "-map", "0:v:0", "-map", "1:a:0"]
         else:
@@ -200,7 +193,7 @@ def main():
     if not args.keep_frames:
         tmp_ctx.cleanup()
 
-    print(f"\nFertig: {args.output}")
+    print(f"\nDone: {args.output}")
 
 
 if __name__ == "__main__":

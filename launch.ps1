@@ -10,22 +10,22 @@ try {
     $rifeExe = Join-Path $projectRoot 'rife-ncnn-vulkan\rife-ncnn-vulkan.exe'
     $rifeModel = Join-Path $projectRoot 'rife-ncnn-vulkan\rife-v4.6'
     foreach ($required in @($pythonExe, $rifeExe, $rifeModel)) {
-        if (-not (Test-Path -LiteralPath $required)) { throw "Fehlt: $required" }
+        if (-not (Test-Path -LiteralPath $required)) { throw "Missing: $required" }
     }
     foreach ($command in @('ffmpeg', 'ffprobe')) {
-        if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "$command fehlt im PATH." }
+        if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "$command is missing from PATH." }
     }
     if ($Check) {
         & $pythonExe -c 'import cv2, numpy; print(cv2.__version__, numpy.__version__)'
-        if ($LASTEXITCODE -ne 0) { throw 'Python-Pruefung fehlgeschlagen.' }
-        Write-Host 'Launcher bereit.'
+        if ($LASTEXITCODE -ne 0) { throw 'Python check failed.' }
+        Write-Host 'Launcher ready.'
         exit 0
     }
     if (-not $InputVideo) {
         Add-Type -AssemblyName System.Windows.Forms
         $dialog = New-Object System.Windows.Forms.OpenFileDialog
-        $dialog.Title = 'Video fuer Seedance Frame Fix auswaehlen'
-        $dialog.Filter = 'Videos|*.mp4;*.mov;*.mkv;*.avi;*.webm|Alle Dateien|*.*'
+        $dialog.Title = 'Select a video for Seedance Frame Fix'
+        $dialog.Filter = 'Videos|*.mp4;*.mov;*.mkv;*.avi;*.webm|All files|*.*'
         try {
             if ($dialog.ShowDialog() -ne 'OK') { exit 0 }
             $InputVideo = $dialog.FileName
@@ -42,14 +42,14 @@ try {
             $suffix++
         }
     } elseif (Test-Path -LiteralPath $OutputVideo) {
-        throw "Ausgabe existiert bereits: $OutputVideo"
+        throw "Output already exists: $OutputVideo"
     }
     $arguments = @('-u', (Join-Path $projectRoot 'insert_best_frame.py'), $InputVideo, $OutputVideo,
                    '--rife-bin', $rifeExe, '--rife-model', $rifeModel)
     & $pythonExe @arguments
-    if ($LASTEXITCODE -ne 0) { throw "Verarbeitung fehlgeschlagen (Exitcode $LASTEXITCODE)." }
-    if (Test-Path -LiteralPath $OutputVideo) { Write-Host "Ergebnis: $OutputVideo" }
-    else { Write-Host 'Keine Sprungstellen erkannt; keine Ausgabedatei erforderlich.' }
+    if ($LASTEXITCODE -ne 0) { throw "Processing failed (exit code $LASTEXITCODE)." }
+    if (Test-Path -LiteralPath $OutputVideo) { Write-Host "Result: $OutputVideo" }
+    else { Write-Host 'No seams detected; no output file needed.' }
     exit 0
 } catch {
     Write-Host $_.Exception.Message -ForegroundColor Red

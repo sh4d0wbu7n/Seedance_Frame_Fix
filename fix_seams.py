@@ -1,32 +1,29 @@
 #!/usr/bin/env python3
 """
-fix_seams.py — repariert die periodischen Chunk-Sprungstellen, die find_seams.py
-gefunden hat. Es werden NUR die Frames direkt an jeder Sprungstelle ersetzt,
-durch echte, KI-basierte Zwischenbilder (RIFE, via rife-ncnn-vulkan) zwischen
-dem letzten sauberen Frame davor und dem ersten sauberen danach.
+fix_seams.py - repairs periodic chunk seams detected by find_seams.py.
+Only frames directly at each seam are replaced with AI-generated intermediate
+images (RIFE via rife-ncnn-vulkan) between clean surrounding frames.
 
-Qualitäts-Pipeline (wichtig!):
-  Video -> verlustfreie PNG-Extraktion (ffmpeg) -> nur die betroffenen PNGs
-  werden durch RIFE-Output ersetzt -> EIN einziger finaler Encode (ffmpeg,
-  hohe Qualität). Alle unberührten Frames durchlaufen dabei nur die normale
-  Kompression, die auch ein direkter Reencode hätte - keine doppelte
-  verlustbehaftete Zwischenkompression, die den Gesamteindruck weichzeichnet.
+Quality pipeline:
+  Video -> lossless PNG extraction (FFmpeg) -> replace affected PNGs with
+  RIFE output -> ONE final high-quality FFmpeg encode.
+  Untouched frames undergo only the compression of a normal direct re-encode,
+  without an extra lossy intermediate pass that would soften the whole video.
 
-WICHTIG: braucht rife-ncnn-vulkan (fertige .exe/binary, kein Python-Paket):
+Requires rife-ncnn-vulkan (standalone executable, not a Python package):
   https://github.com/nihui/rife-ncnn-vulkan/releases
-Entpacken und Pfad zur .exe + Modellordner unten angeben (--rife-bin, --rife-model).
+Extract it and specify the executable/model paths with --rife-bin/--rife-model.
 
-Nutzung:
-  1. Erst find_seams.py laufen lassen (optional, nur zur Kontrolle)
-  2. Dann:
+Usage:
+  1. Optionally run find_seams.py to inspect detections.
+  2. Run:
        python3 fix_seams.py input.mp4 output.mp4 --rife-bin rife-ncnn-vulkan/rife-ncnn-vulkan.exe
-     Das Script erkennt die Sprungstellen selbst (gleiche Logik wie find_seams.py)
-     und repariert automatisch alle gefundenen Stellen.
+     The script detects and repairs seams automatically using the same logic.
 
-  Optional gezielt nur bestimmte Frames reparieren:
+  To repair specific seams:
        python3 fix_seams.py input.mp4 output.mp4 --frames 95,119,143,167 --rife-bin ...
 
-  --crf steuert die finale Qualität (niedriger = besser/größer, default 14).
+  --crf controls final quality (lower = better/larger; default: 14).
 """
 
 import argparse
@@ -57,7 +54,7 @@ def replacement_plan(seams, pad, count):
 def compute_motion_scores(path, resize_width=320):
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
-        sys.exit(f"Konnte Video nicht öffnen: {path}")
+        sys.exit(f"Could not open video: {path}")
     fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
     scores = []
     prev_gray = None
@@ -81,7 +78,7 @@ def run_rife(a_path, b_path, out_path, t, rife_bin, rife_model):
         cmd += ["-m", rife_model]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0 or not out_path.exists():
-        sys.exit(f"RIFE-Aufruf fehlgeschlagen:\n{' '.join(cmd)}\n{result.stderr}")
+        sys.exit(f"RIFE invocation failed:\n{' '.join(cmd)}\n{result.stderr}")
 
 
 def ffprobe_has_audio(path):
@@ -93,30 +90,30 @@ def ffprobe_has_audio(path):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("input", help="Eingabevideo")
-    ap.add_argument("output", help="Ausgabevideo (repariert)")
+    ap.add_argument("input", help="Input video")
+    ap.add_argument("output", help="Output video (repaired)")
     ap.add_argument("--threshold", type=positive_float, default=3.0)
     ap.add_argument("--include-scene-cuts", action="store_true")
     ap.add_argument("--frames", type=frame_indices, default=None,
-                     help="Kommagetrennte Liste von Sprung-Frame-Indizes (überschreibt Auto-Erkennung)")
+                     help="Comma-separated seam frame indices (override automatic detection)")
     ap.add_argument("--pad", type=positive_int, default=1,
-                     help="Wie viele Frames auf jeder Seite als 'sauber' gelten, "
-                          "bevor die Interpolationsbasis genommen wird (default 1)")
+                     help="Number of frames to step out on each side "
+                          "to select clean interpolation endpoints (default: 1)")
     ap.add_argument("--rife-bin", type=str, required=True,
-                     help="Pfad zur rife-ncnn-vulkan(.exe) aus dem Release-Zip")
+                     help="Path to rife-ncnn-vulkan(.exe) from the release ZIP")
     ap.add_argument("--rife-model", type=str, default=None,
-                     help="Pfad zum Modellordner, z.B. rife-ncnn-vulkan/rife-v4.6")
+                     help="Model directory, e.g. rife-ncnn-vulkan/rife-v4.6")
     ap.add_argument("--crf", type=int, default=14,
-                     help="x264 CRF fürs finale Encoding, niedriger = bessere Qualität (default 14)")
+                     help="Final x264 CRF; lower means better quality (default: 14)")
     ap.add_argument("--keep-frames", action="store_true",
-                     help="Temp-Ordner mit den PNG-Frames nicht löschen (zum Nachschauen)")
+                     help="Keep the temporary PNG-frame directory for inspection")
     add_detection_options(ap)
     args = ap.parse_args()
     validate_input(args, ap)
 
     if not shutil.which(args.rife_bin) and not Path(args.rife_bin).exists():
-        sys.exit(f"rife-ncnn-vulkan nicht gefunden unter: {args.rife_bin}\n"
-                  f"Lade es von https://github.com/nihui/rife-ncnn-vulkan/releases")
+        sys.exit(f"rife-ncnn-vulkan not found at: {args.rife_bin}\n"
+                  f"Download it from https://github.com/nihui/rife-ncnn-vulkan/releases")
 
     if args.frames is not None:
         seam_frames = args.frames
@@ -124,15 +121,15 @@ def main():
         fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
         cap.release()
     else:
-        print("Erkenne Sprungstellen ...")
+        print("Detecting seams ...")
         scores, fps = compute_motion_scores(args.input)
         seam_frames = find_jumps(scores, args.threshold, min_relative_jump=args.min_relative_jump, recover_periodic=not args.no_periodic_recovery)
         if not args.include_scene_cuts:
             seam_frames = exclude_scene_cuts(args.input, seam_frames)
-        print(f"{len(seam_frames)} Sprungstellen gefunden: {seam_frames}")
+        print(f"{len(seam_frames)} seams found: {seam_frames}")
 
     if not seam_frames:
-        print("Keine Sprungstellen -> nichts zu tun.")
+        print("No seams found -> nothing to do.")
         return
 
     has_audio = ffprobe_has_audio(args.input)
@@ -142,7 +139,7 @@ def main():
     frames_dir = work_dir / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Extrahiere alle Frames verlustfrei nach {frames_dir} ...")
+    print(f"Extracting all frames losslessly to {frames_dir} ...")
     subprocess.run(
         ["ffmpeg", "-y", "-i", args.input, "-vsync", "0", str(frames_dir / "frame_%06d.png")],
         check=True, capture_output=True,
@@ -152,13 +149,13 @@ def main():
     bad_frames = replacement_plan(seam_frames, args.pad, n_frames)
     replacements = work_dir / 'replacements'
     replacements.mkdir()
-    print(f"{n_frames} Frames extrahiert.")
+    print(f"{n_frames} frames extracted.")
 
     def frame_path(idx0):  # 0-based -> ffmpeg's 1-based filename
         idx0 = max(0, min(idx0, n_frames - 1))
         return frames_dir / f"frame_{idx0 + 1:06d}.png"
 
-    print(f"Ersetze {len(bad_frames)} Frames per RIFE ...")
+    print(f"Replacing {len(bad_frames)} frames with RIFE ...")
     for idx, (a_idx, b_idx, t) in bad_frames.items():
         if idx < 0 or idx >= n_frames:
             continue
@@ -170,7 +167,7 @@ def main():
     for replacement in replacements.glob('*.png'):
         shutil.copy(replacement, frames_dir / replacement.name)
 
-    print(f"Finaler Encode (CRF {args.crf}) ...")
+    print(f"Final encode (CRF {args.crf}) ...")
     cmd = ["ffmpeg", "-y", "-framerate", str(fps), "-i", str(frames_dir / "frame_%06d.png")]
     if has_audio:
         cmd += ["-i", args.input, "-map", "0:v:0", "-map", "1:a:0", "-c:a", "copy"]
@@ -180,7 +177,7 @@ def main():
     if not args.keep_frames:
         tmp_ctx.cleanup()
 
-    print(f"\nFertig: {args.output}")
+    print(f"\nDone: {args.output}")
 
 
 if __name__ == "__main__":

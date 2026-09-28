@@ -1,26 +1,24 @@
 #!/usr/bin/env python3
 """
-find_seams.py — findet periodische "Sprungstellen" (chunk boundary jumps) in
-KI-generierten Videos (z.B. Seedance), die NICHT von doppelten Frames kommen,
-sondern von den internen Generierungs-Chunks des Modells.
+find_seams.py - detects periodic seams (chunk-boundary jumps) in AI-generated
+videos such as Seedance. These are motion discontinuities associated with
+generation chunks, rather than duplicate frames.
 
-Idee:
-  - Für jedes Frame-Paar (i, i+1) wird die Bewegung gemessen (mittlere
-    Pixel-Differenz nach leichtem Blur, robust gegen normales Rauschen).
-  - Werte, die deutlich über dem lokalen Mittelwert liegen, sind Kandidaten
-    für einen "Sprung".
-  - Der Abstand zwischen den Kandidaten wird geclustert, um ein
-    wiederkehrendes Muster (z.B. alle 16, alle 24 Frames) zu erkennen.
+Approach:
+  - Measure motion for each frame pair (i, i+1) using mean pixel difference
+    after a light blur to reduce ordinary noise.
+  - Identify unusually large values relative to local motion.
+  - Examine candidate spacing for recurring patterns, such as 16 or 24 frames.
 
-Nutzung:
+Usage:
   python3 find_seams.py input.mp4
   python3 find_seams.py input.mp4 --threshold 2.5 --min-period 4
 
 Output:
-  - Liste der Frame-Indizes / Timestamps mit ungewöhnlich großem Sprung
-  - Geschätzte Periodizität (z.B. "alle ~24 Frames"), falls erkennbar
-  - CSV mit allen Rohwerten (score_per_frame.csv) zum manuellen Nachschauen
-    z.B. in Excel/Numbers, falls die Heuristik daneben liegt
+  - Frame indices and timestamps with unusually large jumps.
+  - Estimated periodicity, if detected.
+  - Raw scores in score_per_frame.csv for manual inspection, for example
+    in Excel/Numbers when the heuristic needs checking.
 """
 
 import argparse
@@ -37,7 +35,7 @@ from seam_utils import positive_float, positive_int, exclude_scene_cuts
 def compute_motion_scores(path, resize_width=320):
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
-        sys.exit(f"Konnte Video nicht öffnen: {path}")
+        sys.exit(f"Could not open video: {path}")
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
     scores = []
@@ -82,25 +80,25 @@ def cluster_period(jump_indices, min_period=3):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("video", help="Pfad zum Video (z.B. seedance_output.mp4)")
+    ap.add_argument("video", help="Video path (e.g. seedance_output.mp4)")
     ap.add_argument("--threshold", type=positive_float, default=3.0,
-                     help="Robuster z-score-Schwellwert für 'Sprung' (default 3.0, kleiner = empfindlicher)")
-    ap.add_argument("--include-scene-cuts", action="store_true", help="Szenenschnitt-Filter deaktivieren")
+                     help="Robust Z-score threshold for jumps (default: 3.0; lower is more sensitive)")
+    ap.add_argument("--include-scene-cuts", action="store_true", help="Disable the scene-cut filter")
     ap.add_argument("--min-period", type=positive_int, default=3,
-                     help="Minimaler Frame-Abstand, der als Periode gezählt wird")
+                     help="Minimum frame interval counted as a period")
     add_detection_options(ap)
     args = ap.parse_args()
 
-    print(f"Analysiere {args.video} ...")
+    print(f"Analyzing {args.video} ...")
     scores, fps = compute_motion_scores(args.video)
-    print(f"{len(scores)} Frame-Übergänge ausgewertet, fps={fps:.2f}")
+    print(f"{len(scores)} frame transitions analyzed, fps={fps:.2f}")
 
     with open("score_per_frame.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["frame_index", "to_next_frame_score", "timestamp_s"])
         for i, s in enumerate(scores):
             w.writerow([i, round(float(s), 4), round(i / fps, 3)])
-    print("Rohwerte gespeichert in score_per_frame.csv")
+    print("Raw scores saved to score_per_frame.csv")
 
     jumps, detection = detect_jumps(scores, args.threshold,
                                    min_relative_jump=args.min_relative_jump,
@@ -108,29 +106,29 @@ def main():
     if not args.include_scene_cuts:
         jumps = exclude_scene_cuts(args.video, jumps)
     if not jumps:
-        print("\nKeine auffälligen Sprünge gefunden. Versuch --threshold kleiner "
-              "(z.B. 2.0), oder schau dir score_per_frame.csv manuell an — "
-              "such nach Werten, die periodisch über dem Rest liegen.")
+        print("\nNo suspicious jumps found. Try lowering --threshold "
+              "(e.g. 2.0), or inspect score_per_frame.csv manually - "
+              "look for values that periodically exceed the surrounding scores.")
         return
 
-    print(f"\n{len(jumps)} auffällige Sprungstellen gefunden (Übergang Frame i -> i+1):")
+    print(f"\n{len(jumps)} suspicious seams found (transition from frame i -> i+1):")
     for i in jumps:
         print(f"  Frame {i:5d} -> {i+1:5d}   (t={i/fps:6.2f}s)   score={scores[i]:.2f}")
 
     recovered = [i for i in detection['recovered'] if i in jumps]
     if recovered:
-        print(f'Periodisch ergaenzte Spitzen: {recovered}')
+        print(f'Recovered periodic peaks: {recovered}')
     # Confidence must come from independently detected peaks, not recovered ones.
     period, diffs = cluster_period([i for i in detection['strong'] if i in jumps], args.min_period)
     if period:
-        print(f"\nWahrscheinliche Periodizität: alle ~{period} Frames "
-              f"(~{period/fps:.2f}s bei {fps:.1f} fps)")
+        print(f"\nLikely periodicity: every ~{period} frames "
+              f"(~{period/fps:.2f}s at {fps:.1f} fps)")
         confidence = diffs.count(period) / len(diffs)
-        print(f'Uebereinstimmung der Abstaende: {confidence:.0%} '
-              f'({diffs.count(period)}/{len(diffs)}). Kein Beweis fuer eine Modell-Fenstergroesse.')
+        print(f'Matching intervals: {confidence:.0%} '
+              f'({diffs.count(period)}/{len(diffs)}). This does not prove a model window size.')
     else:
-        print("\nKein klar periodisches Muster erkannt — die Sprünge könnten "
-              "auch von der Szene selbst kommen (schnelle Bewegung), nicht vom Modell.")
+        print("\nNo clear periodic pattern detected - jumps may also come "
+              "from the scene itself (fast motion), rather than the model.")
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 $ErrorActionPreference = 'Stop'
 $desktopPath = [Environment]::GetFolderPath('Desktop')
-if (-not $desktopPath) { throw 'Desktop-Ordner konnte nicht ermittelt werden.' }
+if (-not $desktopPath) { throw 'Could not locate the Desktop directory.' }
 $destination = Join-Path $desktopPath 'Seedance Frame Fix.cmd'
-if (Test-Path -LiteralPath $destination) { throw "Launcher existiert bereits: $destination" }
+if (Test-Path -LiteralPath $destination) { throw "Launcher already exists: $destination" }
 $launcherPath = Join-Path $PSScriptRoot 'launch.ps1'
 $content = @"
 @echo off

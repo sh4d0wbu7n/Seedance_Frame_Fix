@@ -65,28 +65,28 @@ def find_jumps(scores, threshold_sigma=3.0, window=15, min_relative_jump=0.10,
 def relative_jump(value):
     number = float(value)
     if not math.isfinite(number) or number < 0:
-        raise argparse.ArgumentTypeError('Relative Mindeststaerke muss endlich und >= 0 sein.')
+        raise argparse.ArgumentTypeError('Minimum relative increase must be finite and >= 0.')
     return number
 
 
 def add_detection_options(parser):
     parser.add_argument('--min-relative-jump', type=relative_jump, default=0.10,
-                        help='Mindestanstieg gegen lokalen Median (0.10 = 10 Prozent)')
+                        help='Minimum increase over the local median (0.10 = 10 percent)')
     parser.add_argument('--no-periodic-recovery', action='store_true',
-                        help='Schwaechere Spitzen auf sicher erkanntem Periodenraster nicht ergaenzen')
+                        help='Do not recover weaker peaks on a confidently detected periodic grid')
 
 
 def positive_int(value):
     number = int(value)
     if number < 1:
-        raise argparse.ArgumentTypeError('Wert muss mindestens 1 sein.')
+        raise argparse.ArgumentTypeError('Value must be at least 1.')
     return number
 
 
 def positive_float(value):
     number = float(value)
     if not math.isfinite(number) or number <= 0:
-        raise argparse.ArgumentTypeError('Wert muss endlich und positiv sein.')
+        raise argparse.ArgumentTypeError('Value must be finite and positive.')
     return number
 
 
@@ -97,33 +97,33 @@ def frame_indices(value):
             raise ValueError
         return result
     except ValueError:
-        raise argparse.ArgumentTypeError('Frames als nichtnegative Indizes angeben, z.B. 95,119.')
+        raise argparse.ArgumentTypeError('Specify nonnegative frame indices, e.g. 95,119.')
 
 
 def validate_frames(indices, count):
     invalid = [i for i in indices if not 0 <= i < count - 1]
     if invalid:
-        raise ValueError(f'Ungueltige Sprung-Indizes {invalid}; erlaubt: 0 bis {count - 2}.')
+        raise ValueError(f'Invalid seam indices {invalid}; allowed range: 0 to {count - 2}.')
 
 
 def validate_input(args, parser):
     if not Path(args.input).is_file():
-        parser.error(f'Eingabevideo fehlt: {args.input}')
+        parser.error(f'Input video is missing: {args.input}')
     if Path(args.input).resolve() == Path(args.output).resolve():
-        parser.error('Eingabe und Ausgabe muessen verschiedene Dateien sein.')
+        parser.error('Input and output must be different files.')
     if not 0 <= args.crf <= 51:
-        parser.error('--crf muss zwischen 0 und 51 liegen.')
+        parser.error('--crf must be between 0 and 51.')
     for tool in ('ffmpeg', 'ffprobe'):
         if not shutil.which(tool):
-            parser.error(f'{tool} fehlt im PATH.')
+            parser.error(f'{tool} is missing from PATH.')
     cap = cv2.VideoCapture(args.input)
     try:
         if not cap.isOpened():
-            parser.error('Video kann nicht geoeffnet werden.')
+            parser.error('Could not open video.')
         fps = cap.get(cv2.CAP_PROP_FPS)
         count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         if not math.isfinite(fps) or fps <= 0:
-            parser.error('Video hat keine gueltige Bildrate.')
+            parser.error('Video has no valid frame rate.')
         if args.frames is not None:
             try:
                 validate_frames(args.frames, count)
@@ -159,7 +159,7 @@ def exclude_scene_cuts(path, indices):
         while pending:
             ok, image = cap.read()
             if not ok:
-                raise ValueError('Video endet vor den zu pruefenden Sprungstellen.')
+                raise ValueError('Video ends before the seam indices to inspect.')
             if index - 1 in pending:
                 if is_scene_cut(previous, image):
                     cuts.add(index - 1)
@@ -169,7 +169,7 @@ def exclude_scene_cuts(path, indices):
     finally:
         cap.release()
     if cuts:
-        print(f'Wahrscheinliche Szenenschnitte ausgelassen: {sorted(cuts)}')
+        print(f'Skipped likely scene cuts: {sorted(cuts)}')
     return [i for i in indices if i not in cuts]
 
 
@@ -178,18 +178,18 @@ def prepare_workdir(path, input_path, output_path):
     # Reject symlinks/junctions before resolving them.
     for part in (raw, *raw.parents):
         if part.is_symlink() or (hasattr(part, 'is_junction') and part.is_junction()):
-            raise ValueError('Workdir darf keine Symlinks oder Junctions enthalten.')
+            raise ValueError('Working-directory path must not contain symlinks or junctions.')
     root = raw.resolve()
     protected = (Path(input_path).resolve(), Path(output_path).resolve(), Path(__file__).resolve().parent)
     if any(p == root or root in p.parents for p in protected):
-        raise ValueError('Workdir darf weder Eingabe/Ausgabe noch das Projekt enthalten.')
+        raise ValueError('Working directory must not contain the input, output, or project.')
     marker = root / MARKER
     if root.exists() and any(root.iterdir()):
         try:
             if json.loads(marker.read_text(encoding='utf-8')) != OWNER:
                 raise ValueError
         except (OSError, ValueError):
-            raise ValueError('Nicht markierter Workdir: bitte einen neuen, leeren Ordner verwenden.')
+            raise ValueError('Unmarked working directory: use a new, empty directory.')
     root.mkdir(parents=True, exist_ok=True)
     marker.write_text(json.dumps(OWNER), encoding='utf-8')
     return root
@@ -198,16 +198,16 @@ def prepare_workdir(path, input_path, output_path):
 def reset_owned_dir(root, name):
     root = Path(root).resolve()
     if json.loads((root / MARKER).read_text(encoding='utf-8')) != OWNER:
-        raise ValueError('Workdir-Markierung fehlt.')
+        raise ValueError('Working-directory marker is missing.')
     if name not in {'frames', 'frames_new', 'candidates'}:
-        raise ValueError('Unbekannter Arbeits-Unterordner.')
+        raise ValueError('Unknown working subdirectory.')
     target = root / name
     if target.resolve().parent != root or target.is_symlink() or (hasattr(target, 'is_junction') and target.is_junction()):
-        raise ValueError('Unsicherer Arbeits-Unterordner.')
+        raise ValueError('Unsafe working subdirectory.')
     if target.exists():
         for entry in target.rglob('*'):
             if entry.is_symlink() or (hasattr(entry, 'is_junction') and entry.is_junction()):
-                raise ValueError('Verknuepfung im Arbeits-Unterordner; Bereinigung abgebrochen.')
+                raise ValueError('Link found in working subdirectory; cleanup aborted.')
         shutil.rmtree(target)
     target.mkdir()
     return target
@@ -236,18 +236,18 @@ def cached_frames(root, source, clean=False):
     except (OSError, ValueError, KeyError, TypeError):
         valid = False
     if valid:
-        print(f'{len(entries)} vollstaendig extrahierte Frames aus Cache verwendet.')
+        print(f'{len(entries)} fully extracted frames reused from cache.')
         return frames, len(entries)
     frames = reset_owned_dir(root, 'frames')
     manifest.unlink(missing_ok=True)
-    print('Extrahiere Originalframes ...')
+    print('Extracting original frames ...')
     subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(source), '-map', '0:v:0',
                     '-vsync', '0', str(frames / 'frame_%06d.png')], check=True)
     entries = {p.name: p.stat().st_size for p in frames.glob('frame_*.png')}
     if not entries or any(size == 0 for size in entries.values()):
-        raise ValueError('Keine vollstaendige Frame-Extraktion vorhanden.')
+        raise ValueError('No complete frame extraction is available.')
     if source_identity(source) != identity:
-        raise ValueError('Eingabe wurde waehrend der Extraktion veraendert.')
+        raise ValueError('Input changed during extraction.')
     temporary = manifest.with_suffix('.tmp')
     temporary.write_text(json.dumps({'source': identity, 'files': entries}), encoding='utf-8')
     temporary.replace(manifest)
