@@ -55,6 +55,15 @@ or drag a video onto the launcher. The result is saved next to the input as
 `<name>_fixed.mp4`. Numbered filenames protect existing results.
 If no seams are detected, no output file is created.
 
+After selecting a video, choose one of the six shot types in the launcher
+console. Each option includes a short explanation. Press Enter to keep the
+tested standard settings, or enter 2-6 to use a different starting point.
+Montage and dialogue presets ask for inspected, zero-based seam indices;
+the dialogue preset also lets you choose whether to stretch audio.
+Enter Q at any settings prompt to cancel before processing.
+All presets use seven candidates and CRF 14, and the selected parameters are
+displayed before processing starts.
+
 The launcher uses `.venv\Scripts\python.exe` and the locally downloaded
 `rife-v4.6` model. FFmpeg and FFprobe must be on PATH. To set it up again:
 
@@ -152,8 +161,9 @@ Example of a conservative run on Windows:
 .\.venv\Scripts\python.exe insert_best_frame.py input.mp4 output.mp4 --rife-bin rife-ncnn-vulkan/rife-ncnn-vulkan.exe --rife-model rife-ncnn-vulkan/rife-v4.6 --threshold 4 --min-relative-jump 0.20 --no-periodic-recovery --candidates 7
 ```
 
-The desktop launcher uses the defaults. For custom parameters, invoke the
-Python script directly as shown above.
+The desktop launcher offers all six starting points above, with the defaults
+selected by pressing Enter. For values beyond these presets, invoke the Python
+script directly as shown above.
 
 **Intermediate files** (extracted originals, all tested candidates, and the
 final sequence) are saved in `<output>_work/` and are **not deleted automatically**.
@@ -226,11 +236,16 @@ See `HANDOVER.md` for further context, open questions, and development ideas.
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe tests\smoke_pipeline.py
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\test_launcher.ps1
 ```
 
 The second test requires FFmpeg, FFprobe, and a locally installed Windows RIFE.
 It generates a short test video in `.test-output/`, checks frame count and
 audio, and reruns processing to check cache reuse.
+
+The PowerShell test checks all six launcher presets, default selection, manual
+frame input, audio choices, invalid input, and cancellation without opening
+dialogs or processing videos.
 
 ## Files in the public repository
 

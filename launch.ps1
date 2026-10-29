@@ -15,6 +15,9 @@ try {
     foreach ($command in @('ffmpeg', 'ffprobe')) {
         if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "$command is missing from PATH." }
     }
+    . (Join-Path $projectRoot '.venv\Scripts\Activate.ps1')
+    Write-Host ('Using virtual environment: ' + (Join-Path $projectRoot '.venv'))
+    . (Join-Path $projectRoot 'launcher_presets.ps1')
     if ($Check) {
         & $pythonExe -c 'import cv2, numpy; print(cv2.__version__, numpy.__version__)'
         if ($LASTEXITCODE -ne 0) { throw 'Python check failed.' }
@@ -32,6 +35,11 @@ try {
         } finally { $dialog.Dispose() }
     }
     $InputVideo = (Resolve-Path -LiteralPath $InputVideo).Path
+    $settings = Select-RepairSettings
+    if ($null -eq $settings) {
+        Write-Host 'Cancelled. No video processed.'
+        exit 0
+    }
     if (-not $OutputVideo) {
         $folder = Split-Path -Parent $InputVideo
         $stem = [IO.Path]::GetFileNameWithoutExtension($InputVideo)
@@ -46,6 +54,7 @@ try {
     }
     $arguments = @('-u', (Join-Path $projectRoot 'insert_best_frame.py'), $InputVideo, $OutputVideo,
                    '--rife-bin', $rifeExe, '--rife-model', $rifeModel)
+    $arguments += $settings.Arguments
     & $pythonExe @arguments
     if ($LASTEXITCODE -ne 0) { throw "Processing failed (exit code $LASTEXITCODE)." }
     if (Test-Path -LiteralPath $OutputVideo) { Write-Host "Result: $OutputVideo" }
